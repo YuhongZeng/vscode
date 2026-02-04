@@ -3395,6 +3395,19 @@ export interface MainThreadChatSessionsShape extends IDisposable {
 	$handleProgressComplete(handle: number, sessionResource: UriComponents, requestId: string): void;
 }
 
+export interface MainThreadChatEditingShape extends IDisposable {
+	$createEditingSession(handle: number): Promise<void>;
+	$applyEdits(handle: number, edits: IWorkspaceEditDto, description?: string): Promise<void>;
+	$accept(handle: number): Promise<void>;
+	$reject(handle: number): Promise<void>;
+}
+
+export interface ExtHostChatEditingShape {
+	$accept(handle: number): Promise<void>;
+	$reject(handle: number): Promise<void>;
+	$onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; added: number; removed: number }[]): Promise<void>;
+}
+
 export interface ExtHostChatSessionsShape {
 	$provideChatSessionItems(providerHandle: number, token: CancellationToken): Promise<Dto<IChatSessionItem>[]>;
 	$onDidChangeChatSessionItemState(providerHandle: number, sessionResource: UriComponents, archived: boolean): void;
@@ -3485,6 +3498,7 @@ export const MainContext = {
 	MainThreadChatStatus: createProxyIdentifier<MainThreadChatStatusShape>('MainThreadChatStatus'),
 	MainThreadAiSettingsSearch: createProxyIdentifier<MainThreadAiSettingsSearchShape>('MainThreadAiSettingsSearch'),
 	MainThreadDataChannels: createProxyIdentifier<MainThreadDataChannelsShape>('MainThreadDataChannels'),
+	MainThreadChatEditing: createProxyIdentifier<MainThreadChatEditingShape>('MainThreadChatEditing'),
 	MainThreadChatSessions: createProxyIdentifier<MainThreadChatSessionsShape>('MainThreadChatSessions'),
 	MainThreadChatOutputRenderer: createProxyIdentifier<MainThreadChatOutputRendererShape>('MainThreadChatOutputRenderer'),
 	MainThreadChatContext: createProxyIdentifier<MainThreadChatContextShape>('MainThreadChatContext'),
@@ -3563,5 +3577,6 @@ export const ExtHostContext = {
 	ExtHostLocalization: createProxyIdentifier<ExtHostLocalizationShape>('ExtHostLocalization'),
 	ExtHostMcp: createProxyIdentifier<ExtHostMcpShape>('ExtHostMcp'),
 	ExtHostDataChannels: createProxyIdentifier<ExtHostDataChannelsShape>('ExtHostDataChannels'),
+	ExtHostChatEditing: createProxyIdentifier<ExtHostChatEditingShape>('ExtHostChatEditing'),
 	ExtHostChatSessions: createProxyIdentifier<ExtHostChatSessionsShape>('ExtHostChatSessions'),
 };

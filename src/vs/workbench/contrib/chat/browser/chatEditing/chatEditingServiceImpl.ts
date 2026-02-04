@@ -170,7 +170,11 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 
 	private _createEditingSession(chatModel: ChatModel, global: boolean, initFrom: IChatEditingSession | undefined): IChatEditingSession {
 
-		assertType(this.getEditingSession(chatModel.sessionResource) === undefined, 'CANNOT have more than one editing session per chat session');
+		const existing = this.getEditingSession(chatModel.sessionResource);
+		if (existing) {
+			return existing;
+		}
+		// assertType(this.getEditingSession(chatModel.sessionResource) === undefined, 'CANNOT have more than one editing session per chat session');
 
 		const session = this._instantiationService.createInstance(ChatEditingSession, chatModel.sessionResource, global, this._lookupEntry.bind(this), initFrom);
 

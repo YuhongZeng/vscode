@@ -116,6 +116,7 @@ import { ExtHostWebviewViews } from './extHostWebviewView.js';
 import { IExtHostWindow } from './extHostWindow.js';
 import { IExtHostWorkspace } from './extHostWorkspace.js';
 import { ExtHostChatContext } from './extHostChatContext.js';
+import { ExtHostChatEditing } from './extHostChatEditing.js';
 
 export interface IExtensionRegistries {
 	mine: ExtensionDescriptionRegistry;
@@ -236,6 +237,7 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 	const extHostStatusBar = rpcProtocol.set(ExtHostContext.ExtHostStatusBar, new ExtHostStatusBar(rpcProtocol, extHostCommands.converter));
 	const extHostSpeech = rpcProtocol.set(ExtHostContext.ExtHostSpeech, new ExtHostSpeech(rpcProtocol));
 	const extHostEmbeddings = rpcProtocol.set(ExtHostContext.ExtHostEmbeddings, new ExtHostEmbeddings(rpcProtocol));
+	const extHostChatEditing = rpcProtocol.set(ExtHostContext.ExtHostChatEditing, new ExtHostChatEditing(rpcProtocol));
 
 	rpcProtocol.set(ExtHostContext.ExtHostMcp, accessor.get(IExtHostMpcService));
 
@@ -1516,8 +1518,13 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 			}
 		};
 
-		// namespace: chatregisterMcpServerDefinitionProvider
+		// namespace: chat
 		const chat: typeof vscode.chat = {
+			ChatEditingFileState: extHostTypes.ChatEditingFileState,
+			createEditingSession() {
+				checkProposedApiEnabled(extension, 'chatParticipantPrivate');
+				return extHostChatEditing.createEditingSession();
+			},
 			registerMappedEditsProvider(_selector: vscode.DocumentSelector, _provider: vscode.MappedEditsProvider) {
 				checkProposedApiEnabled(extension, 'mappedEditsProvider');
 				// no longer supported
@@ -1926,6 +1933,7 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 			ChatCopyKind: extHostTypes.ChatCopyKind,
 			ChatSessionChangedFile: extHostTypes.ChatSessionChangedFile,
 			ChatSessionChangedFile2: extHostTypes.ChatSessionChangedFile2,
+			ChatEditingFileState: extHostTypes.ChatEditingFileState,
 			ChatEditingSessionActionOutcome: extHostTypes.ChatEditingSessionActionOutcome,
 			InteractiveEditorResponseFeedbackKind: extHostTypes.InteractiveEditorResponseFeedbackKind,
 			DebugStackFrame: extHostTypes.DebugStackFrame,

@@ -195,7 +195,7 @@ export class ChatEditingCodeEditorIntegration implements IModifiedFileEntryEdito
 				codeEditorObs.getOption(EditorOption.fontInfo).read(r);
 				codeEditorObs.getOption(EditorOption.lineHeight).read(r);
 
-				const reviewMode = _entry.reviewMode.read(r);
+				const reviewMode = true; // _entry.reviewMode.read(r);
 				const diff = documentDiffInfo.read(r);
 				this._updateDiffRendering(diff, reviewMode, isDiffEditor);
 			}
