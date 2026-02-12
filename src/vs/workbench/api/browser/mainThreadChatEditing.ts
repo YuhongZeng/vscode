@@ -7,7 +7,7 @@ import { Disposable, DisposableMap, IDisposable } from '../../../base/common/lif
 import { autorun } from '../../../base/common/observable.js';
 import { ExtHostChatEditingShape, ExtHostContext, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
-import { IChatEditingService, IChatEditingSession } from '../../contrib/chat/common/editing/chatEditingService.js';
+import { IChatEditingService, IChatEditingSession, IModifiedFileEntry } from '../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../contrib/chat/common/chatService/chatService.js';
 
 import { reviveWorkspaceEditDto } from './mainThreadBulkEdits.js';
@@ -17,6 +17,7 @@ import { IUriIdentityService } from '../../../platform/uriIdentity/common/uriIde
 import { ChatRequestTextPart } from '../../contrib/chat/common/requestParser/chatParserTypes.js';
 import { OffsetRange } from '../../../editor/common/core/ranges/offsetRange.js';
 import { Range } from '../../../editor/common/core/range.js';
+import { URI, UriComponents } from '../../../base/common/uri.js';
 
 @extHostNamedCustomer(MainContext.MainThreadChatEditing)
 export class MainThreadChatEditing extends Disposable implements MainThreadChatEditingShape {
@@ -52,6 +53,7 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 			const files = entries.map(entry => ({
 				uri: entry.modifiedURI,
 				state: entry.state.read(reader),
+				kind: entry.kind,
 				added: entry.linesAdded?.read(reader) ?? 0,
 				removed: entry.linesRemoved?.read(reader) ?? 0
 			}));
@@ -92,33 +94,89 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		// We iterate over the WorkspaceEdit and stream them into the session
 		for (const edit of edits.edits) {
 			// Check if it is a text edit
+			// eslint-disable-next-line local/code-no-in-operator
 			if ('textEdit' in edit) {
 				const uri = edit.resource;
 				const textEdits = edit.textEdit;
 				const stream = session.startStreamingEdits(uri, response, undefined);
 				stream.pushText([textEdits], true);
 				stream.complete();
+			} else {
+				// Handle file operations (create/delete/rename)
+				// We need to filter out custom edits as they are not supported here
+				// And ensure type safety for IWorkspaceFileEdit
+				// eslint-disable-next-line local/code-no-any-casts, @typescript-eslint/no-explicit-any
+				const workspaceEdit = edit as any;
+				// eslint-disable-next-line local/code-no-in-operator
+				if (!('textEdit' in workspaceEdit)) {
+					session.applyWorkspaceEdit({
+						kind: 'workspaceEdit',
+						edits: [workspaceEdit]
+					}, response, 'undoStop'); // Provide a dummy undoStop ID
+				}
 			}
-			// TODO: Handle file operations (create/delete/rename)
 		}
 
 		// Mark response as complete
 		response.complete();
 	}
 
-	async $accept(handle: number): Promise<void> {
+	async $accept(handle: number, uris?: UriComponents[]): Promise<void> {
 		const session = this._sessions.get(handle);
 		if (session) {
-			const uris = session.entries.get().map(e => e.modifiedURI);
-			await session.accept(...uris);
+			const entries = session.entries.get();
+			const targetUris = uris?.map(u => {
+				const entry = this._findEntry(u, entries);
+				if (entry) {
+					return entry.modifiedURI;
+				}
+				// Fallback to revive if not found in session (though unlikely to work if not in session)
+				return URI.revive(u);
+			}) ?? entries.map(e => e.modifiedURI);
+			await session.accept(...targetUris);
 		}
 	}
 
-	async $reject(handle: number): Promise<void> {
+	async $reject(handle: number, uris?: UriComponents[]): Promise<void> {
 		const session = this._sessions.get(handle);
 		if (session) {
-			const uris = session.entries.get().map(e => e.modifiedURI);
-			await session.reject(...uris);
+			const entries = session.entries.get();
+			const targetUris = uris?.map(u => {
+				const entry = this._findEntry(u, entries);
+				if (entry) {
+					return entry.modifiedURI;
+				}
+				return URI.revive(u);
+			}) ?? entries.map(e => e.modifiedURI);
+			await session.reject(...targetUris);
 		}
+	}
+
+	private _findEntry(uri: UriComponents, entries: readonly IModifiedFileEntry[]): IModifiedFileEntry | undefined {
+		return entries.find(e => {
+			const u = uri as (UriComponents & { fsPath?: string; external?: string });
+
+			// Check 1: fsPath (if available) - Case insensitive for Windows/Mac
+			if (typeof u.fsPath === 'string' && e.modifiedURI.fsPath.toLowerCase() === u.fsPath.toLowerCase()) {
+				return true;
+			}
+
+			// Check 2: external/toString() (if available)
+			if (typeof u.external === 'string' && e.modifiedURI.toString() === u.external) {
+				return true;
+			}
+
+			// Check 3: scheme and path
+			if (u.scheme === e.modifiedURI.scheme && u.path === e.modifiedURI.path) {
+				return true;
+			}
+
+			// Check 4: path only (fallback)
+			if (u.path && e.modifiedURI.path === u.path) {
+				return true;
+			}
+
+			return false;
+		});
 	}
 }

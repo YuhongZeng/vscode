@@ -103,7 +103,7 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 	constructor(
 		readonly modifiedURI: URI,
 		protected _telemetryInfo: IModifiedEntryTelemetryInfo,
-		kind: ChatEditKind,
+		readonly kind: ChatEditKind,
 		@IConfigurationService configService: IConfigurationService,
 		@IFilesConfigurationService protected _fileConfigService: IFilesConfigurationService,
 		@IChatService protected readonly _chatService: IChatService,

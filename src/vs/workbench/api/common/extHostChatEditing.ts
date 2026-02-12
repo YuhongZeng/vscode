@@ -16,6 +16,9 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange = this._onDidChange.event;
 
+	private readonly _onDidDispose = this._register(new Emitter<void>());
+	readonly onDidDispose = this._onDidDispose.event;
+
 	private _files: vscode.chat.ChatEditingFile[] = [];
 	get files(): readonly vscode.chat.ChatEditingFile[] {
 		return this._files;
@@ -33,22 +36,27 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 		await this._proxy.$applyEdits(this._handle, dto, description);
 	}
 
-	async accept(): Promise<void> {
-		await this._proxy.$accept(this._handle);
+	async accept(uris?: vscode.Uri[]): Promise<void> {
+		await this._proxy.$accept(this._handle, uris);
 	}
 
-	async reject(): Promise<void> {
-		await this._proxy.$reject(this._handle);
+	async reject(uris?: vscode.Uri[]): Promise<void> {
+		await this._proxy.$reject(this._handle, uris);
 	}
 
-	update(files: { uri: UriComponents; state: number; added: number; removed: number }[]) {
+	update(files: { uri: UriComponents; state: number; kind: number; added: number; removed: number }[]) {
 		this._files = files.map(f => ({
 			uri: URI.revive(f.uri),
 			state: f.state,
+			isNew: f.kind === 0, // ChatEditKind.Created
 			added: f.added,
 			removed: f.removed
 		}));
 		this._onDidChange.fire();
+	}
+	override dispose() {
+		this._onDidDispose.fire();
+		super.dispose();
 	}
 }
 
@@ -62,15 +70,13 @@ export class ExtHostChatEditing implements ExtHostChatEditingShape {
 		this._proxy = extHostRpc.getProxy(MainContext.MainThreadChatEditing);
 	}
 
-	async createEditingSession(): Promise<vscode.chat.ChatEditingSession> {
+	startEditingSession(): Promise<vscode.chat.ChatEditingSession> {
 		const handle = this._nextHandle++;
 		const session = new ChatEditingSession(handle, this._proxy);
 		this._sessions.set(handle, session);
-		
+
 		// In a real implementation we might want to wait for confirmation or handle disposal
-		await this._proxy.$createEditingSession(handle);
-		
-		return session;
+		return this._proxy.$createEditingSession(handle).then(() => session);
 	}
 
 	async $accept(handle: number): Promise<void> {
@@ -81,7 +87,7 @@ export class ExtHostChatEditing implements ExtHostChatEditingShape {
 		// Can be used to trigger local events if needed
 	}
 
-	async $onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; added: number; removed: number }[]): Promise<void> {
+	async $onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; kind: number; added: number; removed: number }[]): Promise<void> {
 		const session = this._sessions.get(handle);
 		session?.update(files);
 	}

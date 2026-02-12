@@ -369,6 +369,7 @@ export interface IModifiedFileEntry {
 	readonly originalURI: URI;
 	readonly modifiedURI: URI;
 	readonly isDeletion?: boolean;
+	readonly kind: ChatEditKind;
 
 	readonly lastModifyingRequestId: string;
 

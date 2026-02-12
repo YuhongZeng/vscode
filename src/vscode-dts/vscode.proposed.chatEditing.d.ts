@@ -19,6 +19,7 @@ declare module 'vscode' {
 		export interface ChatEditingFile {
 			readonly uri: Uri;
 			readonly state: ChatEditingFileState;
+			readonly isNew: boolean;
 			readonly added: number;
 			readonly removed: number;
 		}
@@ -41,19 +42,21 @@ declare module 'vscode' {
 			applyEdits(edit: WorkspaceEdit, description?: string): Thenable<void>;
 
 			/**
-			 * Accept all changes in the session.
+			/**
+			 * Accept all changes in the session, or specific files.
 			 */
-			accept(): Thenable<void>;
+			accept(uris?: Uri[]): Thenable<void>;
 
 			/**
-			 * Reject all changes in the session.
+			 * Reject all changes in the session, or specific files.
 			 */
-			reject(): Thenable<void>;
+			reject(uris?: Uri[]): Thenable<void>;
 		}
 
+
 		/**
-		 * Create a new editing session.
+		 * Start a new editing session.
 		 */
-		export function createEditingSession(): Thenable<ChatEditingSession>;
+		export function startEditingSession(): Thenable<ChatEditingSession>;
 	}
 }

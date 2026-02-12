@@ -87,7 +87,7 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 		resourceRef: IReference<IResolvedTextEditorModel>,
 		private readonly _multiDiffEntryDelegate: IMultiDiffEntryDelegate,
 		telemetryInfo: IModifiedEntryTelemetryInfo,
-		kind: ChatEditKind,
+		override readonly kind: ChatEditKind,
 		initialContent: string | undefined,
 		@IMarkerService markerService: IMarkerService,
 		@IModelService modelService: IModelService,

@@ -29,7 +29,7 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IAgentSessionsService } from '../agentSessions/agentSessionsService.js';
 import { isChatViewTitleActionContext } from '../../common/actions/chatActions.js';
 import { ChatContextKeys } from '../../common/actions/chatContextKeys.js';
-import { applyingChatEditsFailedContextKey, CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, chatEditingResourceContextKey, chatEditingWidgetFileStateContextKey, decidedChatEditingResourceContextKey, hasAppliedChatEditsContextKey, hasUndecidedChatEditingResourceContextKey, IChatEditingService, IChatEditingSession, ModifiedFileEntryState } from '../../common/editing/chatEditingService.js';
+import { applyingChatEditsFailedContextKey, hasAppliedChatEditsContextKey, hasUndecidedChatEditingResourceContextKey, IChatEditingService, IChatEditingSession, ModifiedFileEntryState } from '../../common/editing/chatEditingService.js';
 import { IChatService } from '../../common/chatService/chatService.js';
 import { isChatTreeItem, isRequestVM, isResponseVM } from '../../common/model/chatViewModel.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind } from '../../common/constants.js';
@@ -113,12 +113,12 @@ registerAction2(class OpenFileInDiffAction extends WorkingSetAction {
 			id: 'chatEditing.openFileInDiff',
 			title: localize2('open.fileInDiff', 'Open Changes in Diff Editor'),
 			icon: Codicon.diffSingle,
-			menu: [{
+			/* menu: [{
 				id: MenuId.ChatEditingWidgetModifiedFilesToolbar,
 				when: ContextKeyExpr.equals(chatEditingWidgetFileStateContextKey.key, ModifiedFileEntryState.Modified),
 				order: 2,
 				group: 'navigation'
-			}],
+			}], */
 		});
 	}
 
@@ -149,7 +149,7 @@ registerAction2(class AcceptAction extends WorkingSetAction {
 			id: 'chatEditing.acceptFile',
 			title: localize2('accept.file', 'Keep'),
 			icon: Codicon.check,
-			menu: [{
+			/* menu: [{
 				when: ContextKeyExpr.and(ContextKeyExpr.equals('resourceScheme', CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME), ContextKeyExpr.notIn(chatEditingResourceContextKey.key, decidedChatEditingResourceContextKey.key)),
 				id: MenuId.MultiDiffEditorFileToolbar,
 				order: 0,
@@ -159,7 +159,7 @@ registerAction2(class AcceptAction extends WorkingSetAction {
 				when: ContextKeyExpr.equals(chatEditingWidgetFileStateContextKey.key, ModifiedFileEntryState.Modified),
 				order: 0,
 				group: 'navigation'
-			}],
+			}], */
 		});
 	}
 
@@ -174,7 +174,7 @@ registerAction2(class DiscardAction extends WorkingSetAction {
 			id: 'chatEditing.discardFile',
 			title: localize2('discard.file', 'Undo'),
 			icon: Codicon.discard,
-			menu: [{
+			/* menu: [{
 				when: ContextKeyExpr.and(ContextKeyExpr.equals('resourceScheme', CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME), ContextKeyExpr.notIn(chatEditingResourceContextKey.key, decidedChatEditingResourceContextKey.key)),
 				id: MenuId.MultiDiffEditorFileToolbar,
 				order: 2,
@@ -184,7 +184,7 @@ registerAction2(class DiscardAction extends WorkingSetAction {
 				when: ContextKeyExpr.equals(chatEditingWidgetFileStateContextKey.key, ModifiedFileEntryState.Modified),
 				order: 1,
 				group: 'navigation'
-			}],
+			}], */
 		});
 	}
 
@@ -207,15 +207,14 @@ export class ChatEditingAcceptAllAction extends EditingSessionAction {
 				when: ContextKeyExpr.and(hasUndecidedChatEditingResourceContextKey, ChatContextKeys.inChatInput),
 				weight: KeybindingWeight.WorkbenchContrib,
 			},
-			menu: [
-
+			/* menu: [
 				{
 					id: MenuId.ChatEditingWidgetToolbar,
 					group: 'navigation',
 					order: 0,
 					when: ContextKeyExpr.and(applyingChatEditsFailedContextKey.negate(), ContextKeyExpr.and(hasUndecidedChatEditingResourceContextKey))
 				}
-			]
+			] */
 		});
 	}
 
@@ -234,14 +233,14 @@ export class ChatEditingDiscardAllAction extends EditingSessionAction {
 			icon: Codicon.discard,
 			tooltip: localize('discardAllEdits', 'Undo All Edits'),
 			precondition: hasUndecidedChatEditingResourceContextKey,
-			menu: [
+			/* menu: [
 				{
 					id: MenuId.ChatEditingWidgetToolbar,
 					group: 'navigation',
 					order: 1,
 					when: ContextKeyExpr.and(applyingChatEditsFailedContextKey.negate(), hasUndecidedChatEditingResourceContextKey)
 				}
-			],
+			], */
 			keybinding: {
 				when: ContextKeyExpr.and(hasUndecidedChatEditingResourceContextKey, ChatContextKeys.inChatInput, ChatContextKeys.inputHasText.negate()),
 				weight: KeybindingWeight.WorkbenchContrib,
@@ -266,14 +265,14 @@ export class ToggleExplanationWidgetAction extends EditingSessionAction {
 			title: localize('explainButton', 'Explain'),
 			tooltip: localize('toggleExplanationTooltip', 'Toggle Change Explanations'),
 			precondition: hasUndecidedChatEditingResourceContextKey,
-			menu: [
+			/* menu: [
 				{
 					id: MenuId.ChatEditingWidgetToolbar,
 					group: 'navigation',
 					order: 2,
 					when: ContextKeyExpr.and(hasUndecidedChatEditingResourceContextKey, ContextKeyExpr.has(`config.${ChatConfiguration.ExplainChangesEnabled}`))
 				}
-			],
+			], */
 		});
 	}
 
@@ -323,14 +322,14 @@ export class ChatEditingShowChangesAction extends EditingSessionAction {
 			f1: true,
 			icon: Codicon.diffMultiple,
 			precondition: hasUndecidedChatEditingResourceContextKey,
-			menu: [
+			/* menu: [
 				{
 					id: MenuId.ChatEditingWidgetToolbar,
 					group: 'navigation',
 					order: 4,
 					when: ContextKeyExpr.and(applyingChatEditsFailedContextKey.negate(), ContextKeyExpr.and(hasAppliedChatEditsContextKey, hasUndecidedChatEditingResourceContextKey))
 				}
-			],
+			], */
 		});
 	}
 

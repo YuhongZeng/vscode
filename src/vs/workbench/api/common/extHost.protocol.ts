@@ -3398,14 +3398,14 @@ export interface MainThreadChatSessionsShape extends IDisposable {
 export interface MainThreadChatEditingShape extends IDisposable {
 	$createEditingSession(handle: number): Promise<void>;
 	$applyEdits(handle: number, edits: IWorkspaceEditDto, description?: string): Promise<void>;
-	$accept(handle: number): Promise<void>;
-	$reject(handle: number): Promise<void>;
+	$accept(handle: number, uris?: UriComponents[]): Promise<void>;
+	$reject(handle: number, uris?: UriComponents[]): Promise<void>;
 }
 
 export interface ExtHostChatEditingShape {
 	$accept(handle: number): Promise<void>;
 	$reject(handle: number): Promise<void>;
-	$onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; added: number; removed: number }[]): Promise<void>;
+	$onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; kind: number; added: number; removed: number }[]): Promise<void>;
 }
 
 export interface ExtHostChatSessionsShape {

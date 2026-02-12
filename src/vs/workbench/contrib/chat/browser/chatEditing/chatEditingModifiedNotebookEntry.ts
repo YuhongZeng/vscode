@@ -176,7 +176,7 @@ export class ChatEditingModifiedNotebookEntry extends AbstractChatEditingModifie
 		private readonly _multiDiffEntryDelegate: { collapse: (transaction: ITransaction | undefined) => void },
 		private readonly transientOptions: TransientOptions | undefined,
 		telemetryInfo: IModifiedEntryTelemetryInfo,
-		kind: ChatEditKind,
+		override readonly kind: ChatEditKind,
 		initialContent: string,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IFilesConfigurationService fileConfigService: IFilesConfigurationService,
