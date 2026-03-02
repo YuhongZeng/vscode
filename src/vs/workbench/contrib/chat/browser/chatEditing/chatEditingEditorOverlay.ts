@@ -15,7 +15,7 @@ import { IAction, IActionRunner } from '../../../../../base/common/actions.js';
 import { $, addDisposableGenericMouseMoveListener, append } from '../../../../../base/browser/dom.js';
 import { assertType } from '../../../../../base/common/types.js';
 import { localize } from '../../../../../nls.js';
-import { AcceptAction, navigationBearingFakeActionId, RejectAction } from './chatEditingEditorActions.js';
+import { AcceptAction, navigationBearingFakeActionId, RejectAction, ChatEditingEditorFileContentMenuId, fileNavigationBearingFakeActionId } from './chatEditingEditorActions.js';
 import { IWorkbenchContribution } from '../../../../common/contributions.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { EditorGroupView } from '../../../../browser/parts/editor/editorGroupView.js';
@@ -99,10 +99,11 @@ export class ChatEditingAcceptRejectActionViewItem extends ActionViewItem {
 	}
 }
 
-class ChatEditorOverlayWidget extends Disposable {
+export class ChatEditorOverlayWidget extends Disposable {
 
 	private readonly _domNode: HTMLElement;
 	private readonly _toolbarNode: HTMLElement;
+	private readonly _fileToolbarNode: HTMLElement;
 
 	private readonly _showStore = this._store.add(new DisposableStore());
 
@@ -110,7 +111,7 @@ class ChatEditorOverlayWidget extends Disposable {
 	private readonly _entry = observableValue<IModifiedFileEntry | undefined>(this, undefined);
 	private readonly _isBusy: IObservable<boolean | undefined>;
 
-	private readonly _navigationBearings = observableValue<{ changeCount: number; activeIdx: number; entriesCount: number }>(this, { changeCount: -1, activeIdx: -1, entriesCount: -1 });
+	private readonly _navigationBearings = observableValue<{ changeCount: number; activeIdx: number; entriesCount: number; activeEntryIdx: number }>(this, { changeCount: -1, activeIdx: -1, entriesCount: -1, activeEntryIdx: -1 });
 
 	constructor(
 		private readonly _editor: { focus(): void },
@@ -142,7 +143,12 @@ class ChatEditorOverlayWidget extends Disposable {
 
 		this._toolbarNode = document.createElement('div');
 		this._toolbarNode.classList.add('chat-editor-overlay-toolbar');
+		this._fileToolbarNode = document.createElement('div');
+		this._fileToolbarNode.classList.add('chat-editor-overlay-toolbar', 'file-toolbar');
 
+		this._domNode.style.display = 'flex';
+		this._domNode.style.gap = '10px';
+		this._domNode.style.alignItems = 'center';
 	}
 
 	override dispose() {
@@ -170,26 +176,115 @@ class ChatEditorOverlayWidget extends Disposable {
 
 			const entries = session.entries.read(r);
 
-			let activeIdx = entryIndex !== undefined && changeIndex !== undefined
+			const activeIdx = entryIndex !== undefined && changeIndex !== undefined
 				? changeIndex
 				: -1;
 
-			let totalChangesCount = 0;
-			for (let i = 0; i < entries.length; i++) {
-				const changesCount = entries[i].changesCount.read(r);
-				totalChangesCount += changesCount;
-
-				if (entryIndex !== undefined && i < entryIndex) {
-					activeIdx += changesCount;
-				}
+			// Use local change count instead of global
+			let changeCount = 0;
+			if (entryIndex !== undefined && entryIndex >= 0 && entryIndex < entries.length) {
+				changeCount = entries[entryIndex].changesCount.read(r);
 			}
 
-			this._navigationBearings.set({ changeCount: totalChangesCount, activeIdx, entriesCount: entries.length }, undefined);
+			this._navigationBearings.set({ changeCount, activeIdx, entriesCount: entries.length, activeEntryIdx: entryIndex ?? -1 }, undefined);
 		}));
 
 
 		this._domNode.appendChild(this._toolbarNode);
-		this._showStore.add(toDisposable(() => this._toolbarNode.remove()));
+		this._domNode.appendChild(this._fileToolbarNode);
+
+		this._showStore.add(toDisposable(() => {
+			this._toolbarNode.remove();
+			this._fileToolbarNode.remove();
+		}));
+
+		const actionViewItemProvider = (action: IAction, options: IBaseActionViewItemOptions) => {
+			const that = this;
+
+			if (action.id === navigationBearingFakeActionId) {
+				return new class extends ActionViewItem {
+
+					constructor() {
+						super(undefined, action, { ...options, icon: false, label: true, keybindingNotRenderedWithLabel: true });
+					}
+
+					override render(container: HTMLElement) {
+						super.render(container);
+
+						container.classList.add('label-item');
+
+						this._store.add(autorun(r => {
+							assertType(this.label);
+
+							const { changeCount, activeIdx } = that._navigationBearings.read(r);
+
+							if (changeCount > 0) {
+								const n = activeIdx === -1 ? '1' : `${activeIdx + 1}`;
+								this.label.innerText = `${n}/${changeCount}`;
+							} else {
+								// allow-any-unicode-next-line
+								this.label.innerText = localize('0Of0', "—");
+							}
+
+							this.updateTooltip();
+						}));
+					}
+
+					protected override getTooltip(): string | undefined {
+						const { changeCount, entriesCount } = that._navigationBearings.get();
+						if (changeCount === -1 || entriesCount === -1) {
+							return undefined;
+						}
+						let result: string | undefined;
+						if (changeCount === 1 && entriesCount === 1) {
+							result = localize('tooltip_11', "1 change in 1 file");
+						} else if (changeCount === 1) {
+							result = localize('tooltip_1n', "1 change in {0} files", entriesCount);
+						} else if (entriesCount === 1) {
+							result = localize('tooltip_n1', "{0} changes in 1 file", changeCount);
+						} else {
+							result = localize('tooltip_nm', "{0} changes in {1} files", changeCount, entriesCount);
+						}
+						if (!that._isBusy.get()) {
+							return result;
+						}
+						return localize('tooltip_busy', "{0} - Working...", result);
+					}
+				};
+			}
+
+			if (action.id === fileNavigationBearingFakeActionId) {
+				return new class extends ActionViewItem {
+					constructor() {
+						super(undefined, action, { ...options, icon: false, label: true, keybindingNotRenderedWithLabel: true });
+					}
+
+					override render(container: HTMLElement) {
+						super.render(container);
+						container.classList.add('label-item');
+
+						this._store.add(autorun(r => {
+							assertType(this.label);
+							const { activeEntryIdx, entriesCount } = that._navigationBearings.read(r);
+
+							if (entriesCount > 0) {
+								const fileN = activeEntryIdx === -1 ? '?' : `${activeEntryIdx + 1}`;
+								this.label.innerText = `${fileN}/${entriesCount} files`;
+							} else {
+								// allow-any-unicode-next-line
+								this.label.innerText = localize('0Of0', "—");
+							}
+						}));
+					}
+				};
+			}
+
+			if (action.id === AcceptAction.ID || action.id === RejectAction.ID) {
+				return new ChatEditingAcceptRejectActionViewItem(action, options, that._entry, that._editor, that._keybindingService);
+			}
+
+			return undefined;
+		};
 
 		this._showStore.add(this._instaService.createInstance(MenuWorkbenchToolBar, this._toolbarNode, MenuId.ChatEditingEditorContent, {
 			telemetrySource: 'chatEditor.overlayToolbar',
@@ -199,67 +294,18 @@ class ChatEditorOverlayWidget extends Disposable {
 				useSeparatorsInPrimaryActions: true
 			},
 			menuOptions: { renderShortTitle: true },
-			actionViewItemProvider: (action, options) => {
-				const that = this;
+			actionViewItemProvider
+		}));
 
-				if (action.id === navigationBearingFakeActionId) {
-					return new class extends ActionViewItem {
-
-						constructor() {
-							super(undefined, action, { ...options, icon: false, label: true, keybindingNotRenderedWithLabel: true });
-						}
-
-						override render(container: HTMLElement) {
-							super.render(container);
-
-							container.classList.add('label-item');
-
-							this._store.add(autorun(r => {
-								assertType(this.label);
-
-								const { changeCount, activeIdx } = that._navigationBearings.read(r);
-
-								if (changeCount > 0) {
-									const n = activeIdx === -1 ? '1' : `${activeIdx + 1}`;
-									this.label.innerText = localize('nOfM', "{0} of {1}", n, changeCount);
-								} else {
-									// allow-any-unicode-next-line
-									this.label.innerText = localize('0Of0', "—");
-								}
-
-								this.updateTooltip();
-							}));
-						}
-
-						protected override getTooltip(): string | undefined {
-							const { changeCount, entriesCount } = that._navigationBearings.get();
-							if (changeCount === -1 || entriesCount === -1) {
-								return undefined;
-							}
-							let result: string | undefined;
-							if (changeCount === 1 && entriesCount === 1) {
-								result = localize('tooltip_11', "1 change in 1 file");
-							} else if (changeCount === 1) {
-								result = localize('tooltip_1n', "1 change in {0} files", entriesCount);
-							} else if (entriesCount === 1) {
-								result = localize('tooltip_n1', "{0} changes in 1 file", changeCount);
-							} else {
-								result = localize('tooltip_nm', "{0} changes in {1} files", changeCount, entriesCount);
-							}
-							if (!that._isBusy.get()) {
-								return result;
-							}
-							return localize('tooltip_busy', "{0} - Working...", result);
-						}
-					};
-				}
-
-				if (action.id === AcceptAction.ID || action.id === RejectAction.ID) {
-					return new ChatEditingAcceptRejectActionViewItem(action, options, that._entry, that._editor, that._keybindingService);
-				}
-
-				return undefined;
-			}
+		this._showStore.add(this._instaService.createInstance(MenuWorkbenchToolBar, this._fileToolbarNode, ChatEditingEditorFileContentMenuId, {
+			telemetrySource: 'chatEditor.overlayFileToolbar',
+			hiddenItemStrategy: HiddenItemStrategy.Ignore,
+			toolbarOptions: {
+				primaryGroup: () => true,
+				useSeparatorsInPrimaryActions: true
+			},
+			menuOptions: { renderShortTitle: true },
+			actionViewItemProvider
 		}));
 
 	}
@@ -268,7 +314,7 @@ class ChatEditorOverlayWidget extends Disposable {
 		transaction(tx => {
 			this._session.set(undefined, tx);
 			this._entry.set(undefined, tx);
-			this._navigationBearings.set({ changeCount: -1, activeIdx: -1, entriesCount: -1 }, tx);
+			this._navigationBearings.set({ changeCount: -1, activeIdx: -1, entriesCount: -1, activeEntryIdx: -1 }, tx);
 		});
 		this._showStore.clear();
 	}
@@ -290,7 +336,10 @@ class ChatEditingOverlayController {
 		this._domNode.classList.add('chat-editing-editor-overlay');
 		this._domNode.style.position = 'absolute';
 		this._domNode.style.bottom = `24px`;
-		this._domNode.style.right = `24px`;
+		this._domNode.style.right = '0';
+		this._domNode.style.left = '0';
+		this._domNode.style.justifyContent = 'center';
+		this._domNode.style.display = 'flex';
 		this._domNode.style.zIndex = `100`;
 
 		const widget = instaService.createInstance(ChatEditorOverlayWidget, group);

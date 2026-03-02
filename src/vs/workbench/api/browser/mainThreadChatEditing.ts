@@ -36,13 +36,26 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostChatEditing);
 	}
 
-	async $createEditingSession(handle: number): Promise<void> {
-		const chatModelRef = this._chatService.startSession(ChatAgentLocation.Chat, {});
-		if (!chatModelRef) {
-			throw new Error('Failed to start chat session');
+	async $createEditingSession(handle: number, chatSessionId?: string): Promise<string> {
+		let chatModel: ChatModel | undefined;
+		if (chatSessionId) {
+			const sessionUri = URI.parse(chatSessionId);
+			const ref = await this._chatService.getOrRestoreSession(sessionUri);
+			if (ref) {
+				chatModel = ref.object as ChatModel;
+				// We need to keep a reference to it so it doesn't get disposed
+				this._register(ref);
+			}
 		}
 
-		const chatModel = chatModelRef.object as ChatModel;
+		if (!chatModel) {
+			const chatModelRef = this._chatService.startSession(ChatAgentLocation.Chat, {});
+			if (!chatModelRef) {
+				throw new Error('Failed to start chat session');
+			}
+			chatModel = chatModelRef.object as ChatModel;
+			this._register(chatModelRef);
+		}
 
 		// Ensure we are working with the concrete class to access methods if needed, though interface should suffice for creation
 		const session = this._chatEditingService.createEditingSession(chatModel);
@@ -61,6 +74,8 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		});
 
 		this._sessionDisposables.set(handle, disposable);
+
+		return session.chatSessionResource.toString();
 	}
 
 	async $applyEdits(handle: number, editDto: IWorkspaceEditDto, description: string = 'Extension Edit'): Promise<void> {

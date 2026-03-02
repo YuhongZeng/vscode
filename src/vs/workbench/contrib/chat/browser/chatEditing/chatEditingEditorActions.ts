@@ -22,14 +22,14 @@ import { EditorResourceAccessor, SideBySideEditor, TEXT_DIFF_EDITOR_ID } from '.
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { ACTIVE_GROUP, IEditorService } from '../../../../services/editor/common/editorService.js';
-// import { CTX_HOVER_MODE } from '../../../inlineChat/common/inlineChat.js';
+import { CTX_HOVER_MODE } from '../../../inlineChat/common/inlineChat.js';
 import { MultiDiffEditor } from '../../../multiDiffEditor/browser/multiDiffEditor.js';
 import { IDocumentDiffItemWithMultiDiffEditorItem, MultiDiffEditorInput } from '../../../multiDiffEditor/browser/multiDiffEditorInput.js';
 import { NOTEBOOK_CELL_LIST_FOCUSED, NOTEBOOK_EDITOR_FOCUSED } from '../../../notebook/common/notebookContextKeys.js';
 import { ChatContextKeys } from '../../common/actions/chatContextKeys.js';
 import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, IModifiedFileEntryChangeHunk, IModifiedFileEntryEditorIntegration, ModifiedFileEntryState, parseChatMultiDiffUri, CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME } from '../../common/editing/chatEditingService.js';
 import { CHAT_CATEGORY } from '../actions/chatActions.js';
-import { ctxCursorInChangeRange, ctxHasEditorModification, ctxIsCurrentlyBeingModified } from './chatEditingEditorContextKeys.js';
+import { ctxCursorInChangeRange, ctxHasEditorModification, ctxHasRequestInProgress, ctxIsCurrentlyBeingModified, ctxIsGlobalEditingSession, ctxReviewModeEnabled } from './chatEditingEditorContextKeys.js';
 import { ChatEditingExplanationWidgetManager } from './chatEditingExplanationWidget.js';
 import { IChatEditingExplanationModelManager, IExplanationDiffInfo } from './chatEditingExplanationModelManager.js';
 import { DiffEditorViewModel } from '../../../../../editor/browser/widget/diffEditor/diffEditorViewModel.js';
@@ -38,8 +38,12 @@ import { IViewsService } from '../../../../services/views/common/viewsService.js
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { Event } from '../../../../../base/common/event.js';
-// import { ChatConfiguration } from '../../common/constants.js';
+import { ChatConfiguration } from '../../common/constants.js';
 
+
+export const ChatEditingEditorFileContentMenuId = new MenuId('ChatEditingEditorFileContent');
+export const navigationBearingFakeActionId = 'chatEditor.navigation.bearings';
+export const fileNavigationBearingFakeActionId = 'chatEditor.navigation.fileBearings';
 
 abstract class ChatEditingEditorAction extends Action2 {
 
@@ -101,12 +105,12 @@ abstract class NavigateAction extends ChatEditingEditorAction {
 				),
 			},
 			f1: true,
-			/* menu: {
+			menu: {
 				id: MenuId.ChatEditingEditorContent,
-				group: 'navigate',
-				order: !next ? 2 : 3,
+				group: 'navigation',
+				order: !next ? 0 : 2,
 				when: ContextKeyExpr.and(ctxReviewModeEnabled, ctxHasEditorModification)
-			} */
+			}
 		});
 	}
 
@@ -142,12 +146,12 @@ abstract class NavigateFileAction extends ChatEditingEditorAction {
 				),
 			},
 			f1: true,
-			/* menu: {
-				id: MenuId.ChatEditingEditorContent,
-				group: 'navigate',
-				order: !next ? 4 : 5,
+			menu: {
+				id: ChatEditingEditorFileContentMenuId,
+				group: 'navigation',
+				order: !next ? 0 : 2,
 				when: ContextKeyExpr.and(ctxReviewModeEnabled, ctxHasEditorModification)
-			} */
+			}
 		});
 	}
 
@@ -221,12 +225,12 @@ abstract class KeepOrUndoAction extends ChatEditingEditorAction {
 					? KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyY
 					: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyN,
 			},
-			/* menu: {
+			menu: {
 				id: MenuId.ChatEditingEditorContent,
-				group: 'a_resolve',
-				order: _keep ? 0 : 1,
+				group: 'navigation',
+				order: _keep ? 3 : 4,
 				when: ContextKeyExpr.and(!_keep ? ctxReviewModeEnabled : undefined, ContextKeyExpr.or(ctxIsGlobalEditingSession, ctxHasRequestInProgress.negate()))
-			} */
+			}
 		});
 	}
 
@@ -281,10 +285,10 @@ abstract class AcceptRejectHunkAction extends ChatEditingEditorAction {
 						? KeyMod.CtrlCmd | KeyCode.KeyY
 						: KeyMod.CtrlCmd | KeyCode.KeyN
 				},
-				/* menu: {
+				menu: {
 					id: MenuId.ChatEditingEditorHunk,
 					order: 1
-				} */
+				}
 			}
 		);
 	}
@@ -341,7 +345,7 @@ class ToggleDiffAction extends ChatEditingEditorAction {
 				weight: KeybindingWeight.WorkbenchContrib,
 				primary: KeyMod.Alt | KeyMod.Shift | KeyCode.F7,
 			},
-			/* menu: [{
+			menu: [{
 				id: MenuId.ChatEditingEditorHunk,
 				order: 10
 			}, {
@@ -354,7 +358,7 @@ class ToggleDiffAction extends ChatEditingEditorAction {
 				group: 'a_resolve',
 				order: 2,
 				when: ContextKeyExpr.and(ctxReviewModeEnabled, CTX_HOVER_MODE)
-			}] */
+			}]
 		});
 	}
 
@@ -390,12 +394,12 @@ export class ReviewChangesAction extends ChatEditingEditorAction {
 			id: 'chatEditor.action.reviewChanges',
 			title: localize2('review', "Review"),
 			precondition: ContextKeyExpr.and(ctxHasEditorModification, ctxIsCurrentlyBeingModified.negate()),
-			/* menu: [{
+			menu: [{
 				id: MenuId.ChatEditingEditorContent,
 				group: 'a_resolve',
 				order: 3,
 				when: ContextKeyExpr.and(ctxReviewModeEnabled.negate(), ctxIsCurrentlyBeingModified.negate(), ContextKeyExpr.or(ctxIsGlobalEditingSession, ctxHasRequestInProgress.negate())),
-			}] */
+			}]
 		});
 	}
 
@@ -439,12 +443,12 @@ abstract class MultiDiffAcceptDiscardAction extends Action2 {
 			id: accept ? 'chatEditing.multidiff.acceptAllFiles' : 'chatEditing.multidiff.discardAllFiles',
 			title: accept ? localize('accept4', 'Keep All Edits') : localize('discard4', 'Undo All Edits'),
 			icon: accept ? Codicon.check : Codicon.discard,
-			/* menu: {
+			menu: {
 				when: ContextKeyExpr.equals('resourceScheme', CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME),
 				id: MenuId.EditorTitle,
 				order: accept ? 0 : 1,
 				group: 'navigation',
-			}, */
+			},
 		});
 	}
 
@@ -481,7 +485,7 @@ abstract class MultiDiffAcceptDiscardAction extends Action2 {
 }
 
 
-// const explainMultiDiffSchemes = [CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, 'copilotcli-worktree-changes', 'copilotcloud-pr-changes'];
+const explainMultiDiffSchemes = [CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, 'copilotcli-worktree-changes', 'copilotcloud-pr-changes'];
 
 class ExplainMultiDiffAction extends Action2 {
 
@@ -491,11 +495,11 @@ class ExplainMultiDiffAction extends Action2 {
 		super({
 			id: 'chatEditing.multidiff.explain',
 			title: localize('explain', 'Explain'),
-			/* menu: {
+			menu: {
 				when: ContextKeyExpr.and(ContextKeyExpr.or(...explainMultiDiffSchemes.map(scheme => ContextKeyExpr.equals('resourceScheme', scheme))), ContextKeyExpr.has(`config.${ChatConfiguration.ExplainChangesEnabled}`)),
 				id: MenuId.MultiDiffEditorContent,
 				order: 10,
-			}, */
+			},
 		});
 	}
 
@@ -666,10 +670,19 @@ export function registerChatEditorActions() {
 			title: localize('label', "Navigation Status"),
 			precondition: ContextKeyExpr.false(),
 		},
-		group: 'navigate',
-		order: -1,
-		when: ContextKeyExpr.false(), // ContextKeyExpr.and(ctxReviewModeEnabled, ctxHasEditorModification),
+		group: 'navigation',
+		order: 1,
+		when: ContextKeyExpr.and(ctxReviewModeEnabled, ctxHasEditorModification),
+	});
+
+	MenuRegistry.appendMenuItem(ChatEditingEditorFileContentMenuId, {
+		command: {
+			id: fileNavigationBearingFakeActionId,
+			title: localize('label2', "File Navigation Status"),
+			precondition: ContextKeyExpr.false(),
+		},
+		group: 'navigation',
+		order: 1,
+		when: ContextKeyExpr.and(ctxReviewModeEnabled, ctxHasEditorModification),
 	});
 }
-
-export const navigationBearingFakeActionId = 'chatEditor.navigation.bearings';

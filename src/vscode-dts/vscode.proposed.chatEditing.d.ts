@@ -25,6 +25,7 @@ declare module 'vscode' {
 		}
 
 		export interface ChatEditingSession extends Disposable {
+			readonly id: string;
 			/**
 			 * The list of files modified in this session.
 			 */
@@ -53,10 +54,13 @@ declare module 'vscode' {
 			reject(uris?: Uri[]): Thenable<void>;
 		}
 
+		export interface ChatEditingSessionOptions {
+			chatSessionId?: string;
+		}
 
 		/**
 		 * Start a new editing session.
 		 */
-		export function startEditingSession(): Thenable<ChatEditingSession>;
+		export function startEditingSession(options?: ChatEditingSessionOptions): Thenable<ChatEditingSession>;
 	}
 }
