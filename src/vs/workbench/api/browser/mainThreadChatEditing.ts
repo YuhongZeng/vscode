@@ -7,7 +7,7 @@ import { Disposable, DisposableMap, IDisposable } from '../../../base/common/lif
 import { autorun } from '../../../base/common/observable.js';
 import { ExtHostChatEditingShape, ExtHostContext, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
-import { IChatEditingService, IChatEditingSession, IModifiedFileEntry } from '../../contrib/chat/common/editing/chatEditingService.js';
+import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../contrib/chat/common/chatService/chatService.js';
 
 import { reviveWorkspaceEditDto } from './mainThreadBulkEdits.js';
@@ -63,19 +63,30 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 
 		const disposable = autorun(reader => {
 			const entries = session.entries.read(reader);
-			const files = entries.map(entry => ({
-				uri: entry.modifiedURI,
-				state: entry.state.read(reader),
-				kind: entry.kind,
-				added: entry.linesAdded?.read(reader) ?? 0,
-				removed: entry.linesRemoved?.read(reader) ?? 0
-			}));
+			const files = entries
+				.filter(entry => entry.state.read(reader) === ModifiedFileEntryState.Modified)
+				.map(entry => ({
+					uri: entry.modifiedURI,
+					state: entry.state.read(reader),
+					kind: entry.kind,
+					added: entry.linesAdded?.read(reader) ?? 0,
+					removed: entry.linesRemoved?.read(reader) ?? 0
+				}));
 			this._proxy.$onDidUpdateSession(handle, files);
 		});
 
 		this._sessionDisposables.set(handle, disposable);
 
 		return session.chatSessionResource.toString();
+	}
+
+	async $disposeEditingSession(handle: number): Promise<void> {
+		const session = this._sessions.get(handle);
+		if (session) {
+			await session.stop();
+			this._sessions.deleteAndDispose(handle);
+			this._sessionDisposables.deleteAndDispose(handle);
+		}
 	}
 
 	async $applyEdits(handle: number, editDto: IWorkspaceEditDto, description: string = 'Extension Edit'): Promise<void> {

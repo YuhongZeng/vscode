@@ -186,7 +186,9 @@ export class ChatEditorOverlayWidget extends Disposable {
 				changeCount = entries[entryIndex].changesCount.read(r);
 			}
 
-			this._navigationBearings.set({ changeCount, activeIdx, entriesCount: entries.length, activeEntryIdx: entryIndex ?? -1 }, undefined);
+			const modifiedEntriesCount = entries.filter(e => e.state.read(r) === ModifiedFileEntryState.Modified).length;
+
+			this._navigationBearings.set({ changeCount, activeIdx, entriesCount: modifiedEntriesCount, activeEntryIdx: entryIndex ?? -1 }, undefined);
 		}));
 
 

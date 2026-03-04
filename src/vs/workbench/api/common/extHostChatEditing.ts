@@ -63,7 +63,9 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 		}));
 		this._onDidChange.fire();
 	}
+
 	override dispose() {
+		this._proxy.$disposeEditingSession(this._handle);
 		this._onDidDispose.fire();
 		super.dispose();
 	}
