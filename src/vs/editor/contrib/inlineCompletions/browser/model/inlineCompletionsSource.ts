@@ -9,7 +9,6 @@ import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { equalsIfDefined, thisEqualsC } from '../../../../../base/common/equals.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { cloneAndChange } from '../../../../../base/common/objects.js';
 import { derived, IObservable, IObservableWithChange, ITransaction, observableValue, recordChangesLazy, runOnChange, transaction } from '../../../../../base/common/observable.js';
 // eslint-disable-next-line local/code-no-deep-import-of-internal
 import { observableReducerSettable } from '../../../../../base/common/observableInternal/experimental/reducer.js';
@@ -23,8 +22,7 @@ import { observableConfigValue } from '../../../../../platform/observable/common
 import product from '../../../../../platform/product/common/product.js';
 import { StringEdit } from '../../../../common/core/edits/stringEdit.js';
 import { Position } from '../../../../common/core/position.js';
-import { Range } from '../../../../common/core/range.js';
-import { Command, InlineCompletionEndOfLifeReasonKind, InlineCompletionTriggerKind, InlineCompletionsProvider } from '../../../../common/languages.js';
+import { InlineCompletionEndOfLifeReasonKind, InlineCompletionTriggerKind, InlineCompletionsProvider } from '../../../../common/languages.js';
 import { ILanguageConfigurationService } from '../../../../common/languages/languageConfigurationRegistry.js';
 import { ITextModel } from '../../../../common/model.js';
 import { offsetEditFromContentChanges } from '../../../../common/model/textModelStringEdit.js';
@@ -36,7 +34,7 @@ import { formatRecordableLogEntry, IRecordableEditorLogEntry, IRecordableLogEntr
 import { InlineCompletionEndOfLifeEvent, sendInlineCompletionsEndOfLifeTelemetry } from '../telemetry.js';
 import { wait } from '../utils.js';
 import { InlineSuggestionIdentity, InlineSuggestionItem } from './inlineSuggestionItem.js';
-import { InlineCompletionContextWithoutUuid, InlineSuggestRequestInfo, provideInlineCompletions, runWhenCancelled } from './provideInlineCompletions.js';
+import { InlineCompletionContextWithoutUuid, InlineSuggestRequestInfo, provideInlineCompletions, runWhenCancelled, InlineSuggestionList } from './provideInlineCompletions.js';
 import { RenameSymbolProcessor } from './renameSymbolProcessor.js';
 import { TextModelValueReference } from './textModelValueReference.js';
 
@@ -233,132 +231,121 @@ export class InlineCompletionsSource extends Disposable {
 
 				runWhenCancelled(source.token, () => providerResult.cancelAndDispose({ kind: 'tokenCancellation' }));
 
-				let shouldStopEarly = false;
 				let producedSuggestion = false;
 
-				const providerSuggestions: InlineSuggestionItem[] = [];
+				const providerLists = new Map<InlineCompletionsProvider, InlineSuggestionList>();
+				const providerDisposables = new Map<InlineCompletionsProvider, IDisposable>();
+
 				for await (const list of providerResult.lists) {
 					if (!list) {
 						continue;
 					}
+
+					// Dispose the previous list from this provider
+					providerDisposables.get(list.provider)?.dispose();
+
 					list.addRef();
-					store.add(toDisposable(() => list.removeRef(list.inlineSuggestionsData.length === 0 ? { kind: 'empty' } : { kind: 'notTaken' })));
+					const disposable = toDisposable(() => list.removeRef(list.inlineSuggestionsData.length === 0 ? { kind: 'empty' } : { kind: 'notTaken' }));
+					providerDisposables.set(list.provider, disposable);
+					providerLists.set(list.provider, list);
 
-					for (const item of list.inlineSuggestionsData) {
-						producedSuggestion = true;
-						if (!context.includeInlineEdits && (item.isInlineEdit || item.showInlineEditMenu)) {
-							item.setNotShownReason('notInlineEditRequested');
+					const providerSuggestions: InlineSuggestionItem[] = [];
+					let shouldStopEarly = false;
+
+					for (const provider of providers) {
+						const list = providerLists.get(provider);
+						if (!list) {
 							continue;
 						}
-						if (!context.includeInlineCompletions && !(item.isInlineEdit || item.showInlineEditMenu)) {
-							item.setNotShownReason('notInlineCompletionRequested');
-							continue;
-						}
 
-						item.addPerformanceMarker('providerReturned');
+						for (const item of list.inlineSuggestionsData) {
+							producedSuggestion = true;
+							if (!context.includeInlineEdits && (item.isInlineEdit || item.showInlineEditMenu)) {
+								item.setNotShownReason('notInlineEditRequested');
+								continue;
+							}
+							if (!context.includeInlineCompletions && !(item.isInlineEdit || item.showInlineEditMenu)) {
+								item.setNotShownReason('notInlineCompletionRequested');
+								continue;
+							}
 
-						const targetUri = item.action?.uri;
-						let targetModel: ITextModel;
-						let disposable: IDisposable | undefined;
+							item.addPerformanceMarker('providerReturned');
 
-						if (targetUri && targetUri.toString() !== this._textModel.uri.toString()) {
-							const modelRef = await this._textModelService.createModelReference(targetUri);
-							targetModel = modelRef.object.textEditorModel;
-							disposable = modelRef;
-						} else {
-							targetModel = this._textModel;
-							disposable = undefined;
-						}
+							const targetUri = item.action?.uri;
+							let targetModel: ITextModel;
+							let disposable: IDisposable | undefined;
 
-						const ref = TextModelValueReference.snapshot(targetModel);
+							if (targetUri && targetUri.toString() !== this._textModel.uri.toString()) {
+								const modelRef = await this._textModelService.createModelReference(targetUri);
+								targetModel = modelRef.object.textEditorModel;
+								disposable = modelRef;
+							} else {
+								targetModel = this._textModel;
+								disposable = undefined;
+							}
 
-						const i = InlineSuggestionItem.create(item, ref);
-						if (disposable) {
-							const s = runOnChange(i.identity.onDispose, () => {
-								disposable?.dispose();
-								s.dispose();
-							});
-						}
+							const ref = TextModelValueReference.snapshot(targetModel);
 
-						item.addPerformanceMarker('itemCreated');
-						providerSuggestions.push(i);
-						// Stop after first visible inline completion
-						if (!i.isInlineEdit && !i.showInlineEditMenu && context.triggerKind === InlineCompletionTriggerKind.Automatic) {
-							if (i.isVisible(this._textModel, this._cursorPosition.get())) {
-								shouldStopEarly = true;
+							const i = InlineSuggestionItem.create(item, ref);
+							if (disposable) {
+								const s = runOnChange(i.identity.onDispose, () => {
+									disposable?.dispose();
+									s.dispose();
+								});
+							}
+
+							item.addPerformanceMarker('itemCreated');
+							providerSuggestions.push(i);
+							// Stop after first visible inline completion
+							if (!i.isInlineEdit && !i.showInlineEditMenu && context.triggerKind === InlineCompletionTriggerKind.Automatic) {
+								if (i.isVisible(this._textModel, this._cursorPosition.get())) {
+									shouldStopEarly = true;
+								}
 							}
 						}
-					}
 
-					if (shouldStopEarly) {
-						break;
-					}
-				}
-
-				providerSuggestions.forEach(s => s.addPerformanceMarker('providersResolved'));
-
-				const suggestions: InlineSuggestionItem[] = await Promise.all(providerSuggestions.map(async s => {
-					return this._renameProcessor.proposeRenameRefactoring(this._textModel, s, context);
-				}));
-
-				suggestions.forEach(s => s.addPerformanceMarker('renameProcessed'));
-
-				providerResult.cancelAndDispose({ kind: 'lostRace' });
-
-				if (this._loggingEnabled.get() || this._structuredFetchLogger.isEnabled.get()) {
-					const didAllProvidersReturn = providerResult.didAllProvidersReturn;
-					let error: string | undefined = undefined;
-					if (source.token.isCancellationRequested || this._store.isDisposed || this._textModel.getVersionId() !== request.versionId) {
-						error = 'canceled';
-					}
-					const result = suggestions.map(c => {
-						const comp = c.getSourceCompletion();
-						if (comp.doNotLog) {
-							return undefined;
+						if (shouldStopEarly) {
+							break;
 						}
-						const obj = {
-							insertText: comp.insertText,
-							range: comp.range,
-							additionalTextEdits: comp.additionalTextEdits,
-							uri: comp.uri,
-							command: comp.command,
-							gutterMenuLinkAction: comp.gutterMenuLinkAction,
-							shownCommand: comp.shownCommand,
-							completeBracketPairs: comp.completeBracketPairs,
-							isInlineEdit: comp.isInlineEdit,
-							showInlineEditMenu: comp.showInlineEditMenu,
-							showRange: comp.showRange,
-							warning: comp.warning,
-							hint: comp.hint,
-							supportsRename: comp.supportsRename,
-							correlationId: comp.correlationId,
-							jumpToPosition: comp.jumpToPosition,
-						};
-						return {
-							...(cloneAndChange(obj, v => {
-								if (Range.isIRange(v)) {
-									return Range.lift(v).toString();
-								}
-								if (Position.isIPosition(v)) {
-									return Position.lift(v).toString();
-								}
-								if (Command.is(v)) {
-									return { $commandId: v.id };
-								}
-								return v;
-							}) as object),
-							$providerId: c.source.provider.providerId?.toString(),
-						};
-					}).filter(result => result !== undefined);
+					}
 
-					this._log({ sourceId: 'InlineCompletions.fetch', kind: 'end', requestId, durationMs: (Date.now() - startTime.getTime()), error, result, time: Date.now(), didAllProvidersReturn });
+					providerSuggestions.forEach(s => s.addPerformanceMarker('providersResolved'));
+
+					const suggestions: InlineSuggestionItem[] = await Promise.all(providerSuggestions.map(async s => {
+						return this._renameProcessor.proposeRenameRefactoring(this._textModel, s, context);
+					}));
+
+					suggestions.forEach(s => s.addPerformanceMarker('renameProcessed'));
+
+					// Update the state immediately
+					const cursorPosition = this._cursorPosition.get();
+					transaction(tx => {
+						/** @description Update completions with provider result */
+						const v = this._state.get();
+
+						if (context.selectedSuggestionInfo) {
+							this._state.set({
+								inlineCompletions: InlineCompletionsState.createEmpty(),
+								suggestWidgetInlineCompletions: v.suggestWidgetInlineCompletions.createStateWithAppliedResults(suggestions, request, this._textModel, cursorPosition, activeInlineCompletion),
+							}, tx);
+						} else {
+							this._state.set({
+								inlineCompletions: v.inlineCompletions.createStateWithAppliedResults(suggestions, request, this._textModel, cursorPosition, activeInlineCompletion),
+								suggestWidgetInlineCompletions: InlineCompletionsState.createEmpty(),
+							}, tx);
+						}
+
+						v.inlineCompletions.dispose();
+						v.suggestWidgetInlineCompletions.dispose();
+					});
 				}
 
 				requestResponseInfo.setRequestUuid(providerResult.contextWithUuid.requestUuid);
 				if (producedSuggestion) {
 					requestResponseInfo.setHasProducedSuggestion();
-					if (suggestions.length > 0 && source.token.isCancellationRequested) {
-						suggestions.forEach(s => s.setNotShownReasonIfNotSet('canceled:whileAwaitingOtherProviders'));
+					if (source.token.isCancellationRequested) {
+						// suggestions is not available here, so we cannot update notShownReason for items.
+						// But items are recreated in the loop anyway.
 					}
 				} else {
 					if (source.token.isCancellationRequested) {
@@ -369,49 +356,21 @@ export class InlineCompletionsSource extends Disposable {
 					}
 				}
 
-				const remainingTimeToWait = context.earliestShownDateTime - Date.now();
-				if (remainingTimeToWait > 0) {
-					await wait(remainingTimeToWait, source.token);
-				}
+				providerResult.cancelAndDispose({ kind: 'lostRace' });
 
-				suggestions.forEach(s => s.addPerformanceMarker('minShowDelayPassed'));
-
-				if (source.token.isCancellationRequested || this._store.isDisposed || this._textModel.getVersionId() !== request.versionId
-					|| userJumpedToActiveCompletion.get()  /* In the meantime the user showed interest for the active completion so dont hide it */) {
-					const notShownReason =
-						source.token.isCancellationRequested ? 'canceled:afterMinShowDelay' :
-							this._store.isDisposed ? 'canceled:disposed' :
-								this._textModel.getVersionId() !== request.versionId ? 'canceled:documentChanged' :
-									userJumpedToActiveCompletion.get() ? 'canceled:userJumped' :
-										'unknown';
-					suggestions.forEach(s => s.setNotShownReasonIfNotSet(notShownReason));
-					return false;
-				}
-
-				const endTime = new Date();
-				this._debounceValue.update(this._textModel, endTime.getTime() - startTime.getTime());
-
-				const cursorPosition = this._cursorPosition.get();
-				this._updateOperation.clear();
-				transaction(tx => {
-					/** @description Update completions with provider result */
-					const v = this._state.get();
-
-					if (context.selectedSuggestionInfo) {
-						this._state.set({
-							inlineCompletions: InlineCompletionsState.createEmpty(),
-							suggestWidgetInlineCompletions: v.suggestWidgetInlineCompletions.createStateWithAppliedResults(suggestions, request, this._textModel, cursorPosition, activeInlineCompletion),
-						}, tx);
-					} else {
-						this._state.set({
-							inlineCompletions: v.inlineCompletions.createStateWithAppliedResults(suggestions, request, this._textModel, cursorPosition, activeInlineCompletion),
-							suggestWidgetInlineCompletions: InlineCompletionsState.createEmpty(),
-						}, tx);
+				if (this._loggingEnabled.get() || this._structuredFetchLogger.isEnabled.get()) {
+					const didAllProvidersReturn = providerResult.didAllProvidersReturn;
+					let error: string | undefined = undefined;
+					if (source.token.isCancellationRequested || this._store.isDisposed || this._textModel.getVersionId() !== request.versionId) {
+						error = 'canceled';
 					}
+					// We cannot log the full result here easily because we don't have the last suggestions list handy.
+					// We could reconstruct it or just log empty result for now.
+					const result: unknown[] = [];
+					this._log({ sourceId: 'InlineCompletions.fetch', kind: 'end', requestId, durationMs: (Date.now() - startTime.getTime()), error, result, time: Date.now(), didAllProvidersReturn });
+				}
 
-					v.inlineCompletions.dispose();
-					v.suggestWidgetInlineCompletions.dispose();
-				});
+				this._updateOperation.clear();
 			} finally {
 				store.dispose();
 				decreaseLoadingCount();

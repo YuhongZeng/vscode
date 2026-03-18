@@ -20,6 +20,7 @@ import { EditorAction, ServicesAccessor } from '../../../../browser/editorExtens
 import { EditorContextKeys } from '../../../../common/editorContextKeys.js';
 import { InlineCompletionsProvider } from '../../../../common/languages.js';
 import { ILanguageFeaturesService } from '../../../../common/services/languageFeatures.js';
+import { Range } from '../../../../common/core/range.js';
 import { Context as SuggestContext } from '../../../suggest/browser/suggest.js';
 import { hideInlineCompletionId, inlineSuggestCommitAlternativeActionId, inlineSuggestCommitId, jumpToNextInlineEditId, showNextInlineSuggestionActionId, showPreviousInlineSuggestionActionId, toggleShowCollapsedId } from './commandIds.js';
 import { InlineCompletionContextKeys } from './inlineCompletionContextKeys.js';
@@ -420,5 +421,51 @@ export class DevExtractReproSample extends EditorAction {
 		await clipboardService.writeText(reproStr);
 
 		return { reproCase: reproStr };
+	}
+}
+
+export class TestStreamingInlineCompletionAction extends EditorAction {
+	constructor() {
+		super({
+			id: 'editor.action.inlineSuggest.testStreaming',
+			label: nls.localize('action.inlineSuggest.testStreaming', "Test Streaming Inline Suggestion"),
+			alias: 'Test Streaming Inline Suggestion',
+			precondition: EditorContextKeys.writable,
+		});
+	}
+
+	public override async run(accessor: ServicesAccessor, editor: ICodeEditor): Promise<void> {
+		const languageFeaturesService = accessor.get(ILanguageFeaturesService);
+		const model = editor.getModel();
+		if (!model) {
+			return;
+		}
+
+		const provider: InlineCompletionsProvider = {
+			provideInlineCompletions: async function* (model, position, context, token) {
+				const text = 'Hello, this is a streaming completion!';
+				for (let i = 1; i <= text.length; i++) {
+					if (token.isCancellationRequested) {
+						break;
+					}
+					await new Promise(resolve => setTimeout(resolve, 50));
+					yield {
+						items: [{
+							insertText: text.substring(0, i),
+							range: new Range(position.lineNumber, position.column, position.lineNumber, position.column)
+						}]
+					};
+				}
+			},
+			disposeInlineCompletions: () => { },
+		};
+
+		const disposable = languageFeaturesService.inlineCompletionsProvider.register({ pattern: '**', scheme: '*' }, provider);
+
+		const controller = InlineCompletionsController.get(editor);
+		await controller?.model.get()?.trigger(undefined, { explicit: true });
+
+		// cleanup
+		setTimeout(() => disposable.dispose(), 10000);
 	}
 }

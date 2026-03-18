@@ -7645,7 +7645,7 @@ declare namespace monaco.languages {
 	export type InlineCompletionProviderGroupId = string;
 
 	export interface InlineCompletionsProvider<T extends InlineCompletions = InlineCompletions> {
-		provideInlineCompletions(model: editor.ITextModel, position: Position, context: InlineCompletionContext, token: CancellationToken): ProviderResult<T>;
+		provideInlineCompletions(model: editor.ITextModel, position: Position, context: InlineCompletionContext, token: CancellationToken): ProviderResult<T> | AsyncIterable<T>;
 		/**
 		 * Will be called when an item is shown.
 		 * @param updatedInsertText Is useful to understand bracket completion.

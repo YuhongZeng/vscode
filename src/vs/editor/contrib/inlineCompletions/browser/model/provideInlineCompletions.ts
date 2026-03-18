@@ -15,8 +15,7 @@ import { StringReplacement } from '../../../../common/core/edits/stringEdit.js';
 import { OffsetRange } from '../../../../common/core/ranges/offsetRange.js';
 import { Position } from '../../../../common/core/position.js';
 import { Range } from '../../../../common/core/range.js';
-import { TextReplacement } from '../../../../common/core/edits/textEdit.js';
-import { InlineCompletionEndOfLifeReason, InlineCompletionEndOfLifeReasonKind, InlineCompletion, InlineCompletionContext, InlineCompletions, InlineCompletionsProvider, PartialAcceptInfo, InlineCompletionsDisposeReason, LifetimeSummary, ProviderId, IInlineCompletionHint, InlineCompletionTriggerKind } from '../../../../common/languages.js';
+import { InlineCompletionEndOfLifeReason, InlineCompletionEndOfLifeReasonKind, InlineCompletion, InlineCompletionContext, InlineCompletions, InlineCompletionsProvider, PartialAcceptInfo, InlineCompletionsDisposeReason, LifetimeSummary, ProviderId, IInlineCompletionHint, InlineCompletionTriggerKind, ProviderResult } from '../../../../common/languages.js';
 import { ILanguageConfigurationService } from '../../../../common/languages/languageConfigurationRegistry.js';
 import { ITextModel } from '../../../../common/model.js';
 import { fixBracketsInLine } from '../../../../common/model/bracketPairsTextModelPart/fixBrackets.js';
@@ -26,8 +25,6 @@ import { groupByMap } from '../../../../../base/common/collections.js';
 import { DirectedGraph } from './graph.js';
 import { CachedFunction } from '../../../../../base/common/cache.js';
 import { InlineCompletionViewData, InlineCompletionViewKind } from '../view/inlineEdits/inlineEditsViewInterface.js';
-import { isDefined } from '../../../../../base/common/types.js';
-import { inlineCompletionIsVisible } from './inlineCompletionIsVisible.js';
 import { EditDeltaInfo } from '../../../../common/textModelEditSource.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { InlineSuggestionEditKind } from './editKind.js';
@@ -64,7 +61,7 @@ export function provideInlineCompletions(
 
 	let runningCount = 0;
 
-	const queryProvider = new CachedFunction(async (provider: InlineCompletionsProvider<InlineCompletions>): Promise<InlineSuggestionList | undefined> => {
+	const queryProvider = new CachedFunction(async (provider: InlineCompletionsProvider<InlineCompletions>): Promise<AsyncIterable<InlineSuggestionList> | undefined> => {
 		try {
 			runningCount++;
 			if (cancellationTokenSource.token.isCancellationRequested) {
@@ -76,23 +73,27 @@ export function provideInlineCompletions(
 				// We know there is no cycle, so no recursion here
 				const result = await queryProvider.get(p);
 				if (result) {
-					for (const item of result.inlineSuggestions.items) {
-						if (item.isInlineEdit || typeof item.insertText !== 'string' && item.insertText !== undefined) {
+					// If the other provider has any result, we yield to it.
+					// We need to check if the iterable is empty.
+					// We assume that if it is not undefined, it might have results.
+					// To be sure, we should peek.
+					if (result instanceof BufferOneAsyncIterable) {
+						if (await result.peek()) {
 							return undefined;
 						}
-						if (item.insertText !== undefined) {
-							const t = new TextReplacement(Range.lift(item.range) ?? defaultReplaceRange, item.insertText);
-							if (inlineCompletionIsVisible(t, undefined, model, position)) {
+					} else {
+						// Fallback for safety, though we always return BufferOneAsyncIterable
+						for await (const item of result) {
+							if (item) {
 								return undefined;
 							}
+							break; // Only check first
 						}
-
-						// else: inline completion is not visible, so lets not block
 					}
 				}
 			}
 
-			let result: InlineCompletions | null | undefined;
+			let result: ProviderResult<InlineCompletions> | AsyncIterable<InlineCompletions>;
 			const providerStartTime = Date.now();
 			try {
 				result = await provider.provideInlineCompletions(model, position, contextWithUuid, cancellationTokenSource.token);
@@ -106,32 +107,60 @@ export function provideInlineCompletions(
 				return undefined;
 			}
 
-			const data: InlineSuggestData[] = [];
-			const list = new InlineSuggestionList(result, data, provider);
-			list.addRef();
-			runWhenCancelled(cancellationTokenSource.token, () => {
-				return list.removeRef(cancelReason);
-			});
-			if (cancellationTokenSource.token.isCancellationRequested) {
-				return undefined; // The list is disposed now, so we cannot return the items!
-			}
+			// Normalize to AsyncIterable
+			// eslint-disable-next-line local/code-no-any-casts, @typescript-eslint/no-explicit-any
+			const iterable = (Symbol.asyncIterator in (result as any))
+				? (result as AsyncIterable<InlineCompletions>)
+				: (async function* () { yield await result as InlineCompletions; })();
 
-			for (const item of result.items) {
-				const r = toInlineSuggestData(item, list, defaultReplaceRange, model, languageConfigurationService, contextWithUuid, requestInfo, { startTime: providerStartTime, endTime: providerEndTime });
-				if (ErrorResult.is(r)) {
-					r.logError();
-					continue;
+			return new BufferOneAsyncIterable((async function* () {
+				for await (const item of iterable) {
+					if (!item) {
+						continue;
+					}
+					const data: InlineSuggestData[] = [];
+					const list = new InlineSuggestionList(item, data, provider);
+					list.addRef();
+					runWhenCancelled(cancellationTokenSource.token, () => {
+						return list.removeRef(cancelReason);
+					});
+					if (cancellationTokenSource.token.isCancellationRequested) {
+						continue;
+					}
+
+					for (const completionItem of item.items) {
+						const r = toInlineSuggestData(completionItem, list, defaultReplaceRange, model, languageConfigurationService, contextWithUuid, requestInfo, { startTime: providerStartTime, endTime: providerEndTime });
+						if (ErrorResult.is(r)) {
+							r.logError();
+							continue;
+						}
+						data.push(r);
+					}
+					yield list;
 				}
-				data.push(r);
-			}
+			})());
 
-			return list;
 		} finally {
 			runningCount--;
 		}
 	});
 
-	const inlineCompletionLists = AsyncIterableProducer.fromPromisesResolveOrder(providers.map(p => queryProvider.get(p))).filter(isDefined);
+	const inlineCompletionLists = new AsyncIterableProducer<InlineSuggestionList>(async emitter => {
+		const promises = providers.map(p => queryProvider.get(p));
+		await Promise.all(promises.map(async p => {
+			try {
+				const stream = await p;
+				if (!stream) {
+					return;
+				}
+				for await (const item of stream) {
+					emitter.emitOne(item);
+				}
+			} catch (e) {
+				onUnexpectedExternalError(e);
+			}
+		}));
+	});
 
 	return {
 		contextWithUuid,
@@ -145,6 +174,43 @@ export function provideInlineCompletions(
 			cancellationTokenSource.dispose(true);
 		}
 	};
+}
+
+class BufferOneAsyncIterable<T> implements AsyncIterable<T> {
+	private _first: T | undefined;
+	private _hasFirst = false;
+	private _source: AsyncIterator<T>;
+
+	constructor(iterable: AsyncIterable<T>) {
+		this._source = iterable[Symbol.asyncIterator]();
+	}
+
+	async peek(): Promise<T | undefined> {
+		if (this._hasFirst) {
+			return this._first;
+		}
+		const { done, value } = await this._source.next();
+		if (done) {
+			return undefined;
+		}
+		this._first = value;
+		this._hasFirst = true;
+		return value;
+	}
+
+	async *[Symbol.asyncIterator]() {
+		if (this._hasFirst) {
+			this._hasFirst = false;
+			yield this._first!;
+		}
+		while (true) {
+			const { done, value } = await this._source.next();
+			if (done) {
+				break;
+			}
+			yield value;
+		}
+	}
 }
 
 /** If the token is eventually cancelled, this will not leak either. */

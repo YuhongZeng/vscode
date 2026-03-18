@@ -934,7 +934,7 @@ export type InlineCompletionCommand = { command: Command; icon?: ThemeIcon };
 export type InlineCompletionProviderGroupId = string;
 
 export interface InlineCompletionsProvider<T extends InlineCompletions = InlineCompletions> {
-	provideInlineCompletions(model: model.ITextModel, position: Position, context: InlineCompletionContext, token: CancellationToken): ProviderResult<T>;
+	provideInlineCompletions(model: model.ITextModel, position: Position, context: InlineCompletionContext, token: CancellationToken): ProviderResult<T> | AsyncIterable<T>;
 
 	/**
 	 * Will be called when an item is shown.
