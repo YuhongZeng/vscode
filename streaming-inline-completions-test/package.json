@@ -1,0 +1,53 @@
+  {
+    "name": "streaming-inline-completions-test",
+    "displayName": "Streaming Inline Completions Test",
+    "description": "Test plugin for streaming inline completions",
+    "version": "0.0.1",
+    "engines": {
+      "vscode": "^1.96.0"
+    },
+    "enabledApiProposals": [
+      "inlineCompletionsAdditions"
+    ],
+    "categories": [
+      "Other"
+    ],
+    "activationEvents": [
+      "*"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+      "commands": [
+        {
+          "command": "streamingPlugin.triggerStream",
+          "title": "Trigger Streaming Inline Completion"
+        },
+        {
+          "command": "streamingPlugin.triggerNormal",
+          "title": "Trigger Normal Inline Completion"
+        },
+        {
+          "command": "streamingPlugin.test.smoothInput",
+          "title": "Test: Smooth Input"
+        },
+        {
+          "command": "streamingPlugin.test.cursorEscape",
+          "title": "Test: Cursor Escape"
+        },
+        {
+          "command": "streamingPlugin.test.chaoticRollback",
+          "title": "Test: Chaotic Input Rollback"
+        }
+      ]
+    },
+    "scripts": {
+      "vscode:prepublish": "npm run compile",
+      "compile": "tsc -p ./",
+      "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+      "@types/node": "^18.x",
+      "@types/vscode": "^1.96.0",
+      "typescript": "^5.x"
+    }
+  }

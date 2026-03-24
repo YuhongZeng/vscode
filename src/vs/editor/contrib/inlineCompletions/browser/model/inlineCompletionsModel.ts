@@ -36,7 +36,7 @@ import { SnippetController2 } from '../../../snippet/browser/snippetController2.
 import { getEndPositionsAfterApplying, removeTextReplacementCommonSuffixPrefix } from '../utils.js';
 import { AnimatedValue, easeOutCubic, ObservableAnimatedValue } from './animation.js';
 import { computeGhostText } from './computeGhostText.js';
-import { GhostText, GhostTextOrReplacement, ghostTextOrReplacementEquals, ghostTextsOrReplacementsEqual } from './ghostText.js';
+import { GhostText, GhostTextOrReplacement, ghostTextOrReplacementEquals, ghostTextsOrReplacementsEqual, GhostTextReplacement } from './ghostText.js';
 import { InlineCompletionsSource } from './inlineCompletionsSource.js';
 import { InlineCompletionItem, InlineEditItem, InlineSuggestionItem } from './inlineSuggestionItem.js';
 import { InlineCompletionContextWithoutUuid, InlineCompletionEditorType, InlineSuggestRequestInfo, InlineSuggestSku } from './provideInlineCompletions.js';
@@ -59,7 +59,7 @@ export class InlineCompletionsModel extends Disposable {
 	private readonly _source;
 	private readonly _isActive = observableValue<boolean>(this, false);
 	private readonly _onlyRequestInlineEditsSignal = observableSignal(this);
-	private readonly _forceUpdateExplicitlySignal = observableSignal(this);
+	private readonly _forceUpdateExplicitlySignal = observableSignal<{ changeHint?: IInlineCompletionChangeHint } | undefined>(this);
 	private readonly _noDelaySignal = observableSignal(this);
 
 	private readonly _fetchSpecificProviderSignal = observableSignal<{ provider: InlineCompletionsProvider; changeHint?: IInlineCompletionChangeHint } | undefined>(this);
@@ -100,6 +100,8 @@ export class InlineCompletionsModel extends Disposable {
 	private readonly _showOnSuggestConflict;
 	private readonly _suppressInSnippetMode;
 	private readonly _isInSnippetMode;
+
+	public readonly isStreaming = derived(this, reader => this._source.session?.isStreaming.read(reader) ?? false);
 
 	get editor() {
 		return this._editor;
@@ -348,9 +350,24 @@ export class InlineCompletionsModel extends Disposable {
 					const detailedReasons = ctx.change?.detailedReasons ?? [];
 					changeSummary.changeReason = detailedReasons.length > 0 ? detailedReasons[0].getType() : '';
 					changeSummary.textChange = true;
+
+					const session = this._source.session;
+					if (this.isStreaming.get() && session) {
+						const changes = ctx.change?.changes;
+						if (changes && changes.length === 1 && changes[0].rangeLength === 0) {
+							const text = changes[0].text.replace(/\r\n/g, '\n');
+							const ghostText = this.primaryGhostText.get();
+							if (ghostText && ghostText.parts.length > 0) {
+								if (session.tryConsumeInput(text, this.textModel.getVersionId(), this.primaryPosition.get())) {
+									changeSummary.preserveCurrentCompletion = true;
+								}
+							}
+						}
+					}
 				} else if (ctx.didChange(this._forceUpdateExplicitlySignal)) {
 					changeSummary.preserveCurrentCompletion = true;
 					changeSummary.inlineCompletionTriggerKind = InlineCompletionTriggerKind.Explicit;
+					changeSummary.changeHint = ctx.change?.changeHint;
 				} else if (ctx.didChange(this.dontRefetchSignal)) {
 					changeSummary.dontRefetch = true;
 				} else if (ctx.didChange(this._onlyRequestInlineEditsSignal)) {
@@ -444,7 +461,14 @@ export class InlineCompletionsModel extends Disposable {
 		}
 
 		const itemToPreserveCandidate = this.selectedInlineCompletion.read(undefined) ?? this._inlineCompletionItems.read(undefined)?.inlineEdit;
-		const itemToPreserve = changeSummary.preserveCurrentCompletion || itemToPreserveCandidate?.forwardStable
+		// Do not preserve item if we are streaming and the reason is just a text change (like newline)
+		const isStreamingCandidate = this.isStreaming.read(undefined);
+
+		// If there was a text change (e.g. user typing, new line) and we didn't explicitly want to preserve it
+		// we should not preserve streaming candidates, otherwise they "stick" to the new line.
+		const shouldNotPreserveBecauseStreaming = isStreamingCandidate && changeSummary.textChange && !changeSummary.preserveCurrentCompletion;
+
+		const itemToPreserve = changeSummary.preserveCurrentCompletion || (itemToPreserveCandidate?.forwardStable && !shouldNotPreserveBecauseStreaming)
 			? itemToPreserveCandidate : undefined;
 		const userJumpedToActiveCompletion = this._jumpedToId.map(jumpedTo => !!jumpedTo && jumpedTo === this._inlineCompletionItems.read(undefined)?.inlineEdit?.semanticId);
 
@@ -491,7 +515,7 @@ export class InlineCompletionsModel extends Disposable {
 
 			if (options.explicit) {
 				this._inAcceptFlow.set(true, tx);
-				this._forceUpdateExplicitlySignal.trigger(tx);
+				this._forceUpdateExplicitlySignal.trigger(tx, { changeHint: options.changeHint });
 			}
 			if (options.provider) {
 				this._fetchSpecificProviderSignal.trigger(tx, { provider: options.provider, changeHint: options.changeHint });
@@ -670,8 +694,9 @@ export class InlineCompletionsModel extends Disposable {
 			const mode = this._suggestPreviewMode.read(reader);
 			const positions = this._positions.read(reader);
 			const allPotentialEdits = [fullEdit, ...getSecondaryEdits(this.textModel, positions, fullEdit)];
+			const session = this._source.session;
 			const validEditsAndGhostTexts = allPotentialEdits
-				.map((edit, idx) => ({ edit, ghostText: edit ? computeGhostText(edit, model, mode, positions[idx], fullEditPreviewLength) : undefined }))
+				.map((edit, idx) => ({ edit, ghostText: edit ? computeGhostText(edit, model, mode, positions[idx], fullEditPreviewLength, session) : undefined }))
 				.filter(({ edit, ghostText }) => edit !== undefined && ghostText !== undefined);
 			const edits = validEditsAndGhostTexts.map(({ edit }) => edit!);
 			const ghostTexts = validEditsAndGhostTexts.map(({ ghostText }) => ghostText!);
@@ -686,8 +711,9 @@ export class InlineCompletionsModel extends Disposable {
 			const mode = this._inlineSuggestMode.read(reader);
 			const positions = this._positions.read(reader);
 			const allPotentialEdits = [replacement, ...getSecondaryEdits(this.textModel, positions, replacement)];
+			const session = this._source.session;
 			const validEditsAndGhostTexts = allPotentialEdits
-				.map((edit, idx) => ({ edit, ghostText: edit ? computeGhostText(edit, model, mode, positions[idx], 0) : undefined }))
+				.map((edit, idx) => ({ edit, ghostText: edit ? computeGhostText(edit, model, mode, positions[idx], 0, session) : undefined }))
 				.filter(({ edit, ghostText }) => edit !== undefined && ghostText !== undefined);
 			const edits = validEditsAndGhostTexts.map(({ edit }) => edit!);
 			const ghostTexts = validEditsAndGhostTexts.map(({ ghostText }) => ghostText!);
@@ -866,6 +892,37 @@ export class InlineCompletionsModel extends Disposable {
 	public readonly isInDiffEditor;
 
 	public readonly editorType: InlineCompletionEditorType;
+
+	public isCursorEscaped(newPosition: Position): boolean {
+		const state = this.state.get();
+		if (!state || state.kind !== 'ghostText') {
+			return true;
+		}
+
+		const ghostText = state.primaryGhostText;
+		if (ghostText.isEmpty()) {
+			return true;
+		}
+
+		const lineNumber = ghostText.lineNumber;
+		if (newPosition.lineNumber !== lineNumber) {
+			return true;
+		}
+
+		const firstPart = ghostText.parts[0];
+		let ghostAnchor = firstPart.column;
+		let endColumn = firstPart.column;
+
+		if (ghostText instanceof GhostTextReplacement) {
+			ghostAnchor = ghostText.columnRange.startColumn;
+			endColumn = ghostText.columnRange.endColumnExclusive;
+		} else {
+			const lastPart = ghostText.parts[ghostText.parts.length - 1];
+			endColumn = lastPart.column;
+		}
+
+		return newPosition.column < ghostAnchor || newPosition.column > endColumn;
+	}
 
 	private async _deltaSelectedInlineCompletionIndex(delta: 1 | -1): Promise<void> {
 		await this.triggerExplicitly();

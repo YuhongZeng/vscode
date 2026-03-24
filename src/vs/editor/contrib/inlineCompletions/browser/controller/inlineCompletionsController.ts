@@ -120,6 +120,8 @@ export class InlineCompletionsController extends Disposable {
 
 	protected readonly _view = derived(reader => reader.store.add(this._instantiationService.createInstance(InlineSuggestionsView.hot.read(reader), this.editor, this.model, this._focusIsInMenu)));
 
+	private _blurTimeout: any = -1;
+
 	constructor(
 		public readonly editor: ICodeEditor,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
@@ -247,31 +249,40 @@ export class InlineCompletionsController extends Disposable {
 			}
 		}));
 
-		this._register(runOnChange(this._editorObs.selections, (_value, _, changes) => {
+		this._register(runOnChange(this._editorObs.selections, (selections, _, changes) => {
 			if (changes.some(e => e.reason === CursorChangeReason.Explicit || e.source === 'api')) {
 				if (!this._hideInlineEditOnSelectionChange.get() && this.model.get()?.state.get()?.kind === 'inlineEdit') {
 					return;
 				}
 				const m = this.model.get();
 				if (!m) { return; }
-				if (m.state.get()?.kind === 'ghostText') {
-					this.model.get()?.stop();
+
+				const state = m.state.get();
+				if (state?.kind === 'ghostText') {
+					const cursorPosition = selections?.[0]?.getPosition();
+					if (cursorPosition && m.isCursorEscaped(cursorPosition)) {
+						m.stop();
+					}
 				}
 			}
 		}));
 
-		this._register(autorun(reader => {
-			const isFocused = this._focusIsInEditorOrMenu.read(reader);
-			const model = this.model.read(undefined);
+		this._register(runOnChange(this._focusIsInEditorOrMenu, (isFocused) => {
+			if (this._blurTimeout !== -1) {
+				clearTimeout(this._blurTimeout);
+				this._blurTimeout = -1;
+			}
+
 			if (isFocused) {
 				// If this model already has an NES for another editor, then leave as is
 				// Else stop other models.
-				const state = model?.state.read(undefined);
+				const model = this.model.get();
+				const state = model?.state.get();
 				if (!state || state.kind !== 'inlineEdit' || !state.nextEditUri) {
 					transaction(tx => {
 						for (const ctrl of InlineCompletionsController._instances) {
 							if (ctrl !== this) {
-								ctrl.model.read(undefined)?.stop('automatic', tx);
+								ctrl.model.get()?.stop('automatic', tx);
 							}
 						}
 					});
@@ -279,24 +290,45 @@ export class InlineCompletionsController extends Disposable {
 				return;
 			}
 
-			// This is a hidden setting very useful for debugging
-			if (this._contextKeyService.getContextKeyValue<boolean>('accessibleViewIsShown')
-				|| this._configurationService.getValue('editor.inlineSuggest.keepOnBlur')
-				|| editor.getOption(EditorOption.inlineSuggest).keepOnBlur
-				|| InlineSuggestionHintsContentWidget.dropDownVisible) {
-				return;
-			}
+			const currentModel = this.model.get();
+			if (!currentModel) { return; }
 
-			if (!model) { return; }
-			if (model.state.read(undefined)?.inlineSuggestion?.isFromExplicitRequest && model.inlineEditAvailable.read(undefined)) {
-				// dont hide inline edits on blur when requested explicitly
-				return;
-			}
+			this._blurTimeout = setTimeout(() => {
+				this._blurTimeout = -1;
 
-			transaction(tx => {
-				/** @description InlineCompletionsController.onDidBlurEditorWidget */
-				model.stop('automatic', tx);
-			});
+				if (this._focusIsInEditorOrMenu.get()) {
+					return;
+				}
+
+				// This is a hidden setting very useful for debugging
+				if (this._contextKeyService.getContextKeyValue<boolean>('accessibleViewIsShown')
+					|| this._configurationService.getValue('editor.inlineSuggest.keepOnBlur')
+					|| this.editor.getOption(EditorOption.inlineSuggest).keepOnBlur
+					|| InlineSuggestionHintsContentWidget.dropDownVisible) {
+					return;
+				}
+
+				const currentModel = this.model.get();
+				if (!currentModel) { return; }
+
+				const state = currentModel.state.get();
+				if (state?.inlineSuggestion?.isFromExplicitRequest && currentModel.inlineEditAvailable.get()) {
+					// dont hide inline edits on blur when requested explicitly
+					return;
+				}
+
+				const isStreaming = currentModel.isStreaming.get();
+
+				if (isStreaming) {
+					// Task 3.2: 保护流式生成，不 stop
+					return;
+				}
+
+				transaction(tx => {
+					/** @description InlineCompletionsController.onDidBlurEditorWidget */
+					currentModel.stop('automatic', tx);
+				});
+			}, 75); // Task 4.1: 防抖 75ms
 		}));
 
 		this._register(autorun(reader => {
@@ -411,6 +443,13 @@ export class InlineCompletionsController extends Disposable {
 		}));
 
 		this._register(this._instantiationService.createInstance(TextModelChangeRecorder, this.editor));
+
+		this._register(toDisposable(() => {
+			if (this._blurTimeout !== -1) {
+				clearTimeout(this._blurTimeout);
+				this._blurTimeout = -1;
+			}
+		}));
 	}
 
 	public playAccessibilitySignal(tx: ITransaction) {

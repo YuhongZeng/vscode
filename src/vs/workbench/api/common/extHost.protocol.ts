@@ -474,6 +474,7 @@ export interface ISignatureHelpProviderMetadataDto {
 export interface IdentifiableInlineCompletions extends languages.InlineCompletions<IdentifiableInlineCompletion> {
 	pid: number;
 	languageId: string;
+	isStreaming?: boolean;
 }
 
 export interface IdentifiableInlineCompletion extends languages.InlineCompletion {

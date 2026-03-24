@@ -7635,6 +7635,7 @@ declare namespace monaco.languages {
 		 * When set and the user types a suggestion without derivating from it, the inline suggestion is not updated.
 		 */
 		readonly enableForwardStability?: boolean | undefined;
+		readonly isStreaming?: boolean | undefined;
 	}
 
 	export type InlineCompletionCommand = {

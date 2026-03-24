@@ -11,6 +11,7 @@ import { TextReplacement } from '../../../../common/core/edits/textEdit.js';
 import { ITextModel } from '../../../../common/model.js';
 import { GhostText, GhostTextPart } from './ghostText.js';
 import { singleTextRemoveCommonPrefix } from './singleTextEditHelpers.js';
+import { StreamingInlineCompletionsSession } from './inlineCompletionsSource.js';
 
 /**
  * @param previewSuffixLength Sets where to split `inlineCompletion.text`.
@@ -21,7 +22,8 @@ export function computeGhostText(
 	model: ITextModel,
 	mode: 'prefix' | 'subword' | 'subwordSmart',
 	cursorPosition?: Position,
-	previewSuffixLength = 0
+	previewSuffixLength = 0,
+	session?: StreamingInlineCompletionsSession
 ): GhostText | undefined {
 	let e = singleTextRemoveCommonPrefix(edit, model);
 
@@ -59,6 +61,24 @@ export function computeGhostText(
 			: e.text.substring(suggestionAddedIndentationLength);
 
 		e = new TextReplacement(rangeThatDoesNotReplaceIndentation, suggestionWithoutIndentationChange);
+	}
+
+	if (session && session.isStreaming.get()) {
+		// Use the ghostAnchor and truncated buffer for streaming ghost text
+		// to maintain typewriter effects and avoid expensive full diffs.
+		const buffer = session.buffer;
+		
+		// Ensure typewriter effect: only render the buffer
+		const parts = new Array<GhostTextPart>();
+		if (buffer.length > 0) {
+			// e.range is already adjusted by singleTextRemoveCommonPrefix,
+			// which correctly aligns with the ghostAnchor offset.
+			const insertColumn = e.range.startColumn;
+			parts.push(new GhostTextPart(insertColumn, buffer, false));
+		}
+		
+		// Note: The UI view handles streaming animations if any, but we bypass diff
+		return new GhostText(e.range.startLineNumber, parts);
 	}
 
 	// This is a single line string
@@ -119,28 +139,71 @@ export function computeGhostText(
 
 let lastRequest: { originalValue: string; newValue: string; changes: readonly IDiffChange[] | undefined } | undefined = undefined;
 function cachingDiff(originalValue: string, newValue: string): readonly IDiffChange[] | undefined {
-	if (lastRequest?.originalValue === originalValue && lastRequest?.newValue === newValue) {
-		return lastRequest?.changes;
-	} else {
-		let changes = smartDiff(originalValue, newValue, true);
-		if (changes) {
-			const deletedChars = deletedCharacters(changes);
-			if (deletedChars > 0) {
-				// For performance reasons, don't compute diff if there is nothing to improve
-				const newChanges = smartDiff(originalValue, newValue, false);
-				if (newChanges && deletedCharacters(newChanges) < deletedChars) {
-					// Disabling smartness seems to be better here
-					changes = newChanges;
+	if (lastRequest?.originalValue === originalValue) {
+		if (lastRequest?.newValue === newValue) {
+			return lastRequest?.changes;
+		}
+		if (lastRequest?.changes && newValue.startsWith(lastRequest.newValue)) {
+			const changes = lastRequest.changes;
+			// If the previous diff had no deletions, we know all original characters were matched.
+			// Any appended characters to `newValue` must be insertions at the very end.
+			if (changes.every(c => c.originalLength === 0)) {
+				const appendLength = newValue.length - lastRequest.newValue.length;
+				let newChanges: IDiffChange[];
+				if (changes.length > 0) {
+					const lastChange = changes[changes.length - 1];
+					if (lastChange.originalStart === originalValue.length && lastChange.modifiedStart + lastChange.modifiedLength === lastRequest.newValue.length) {
+						newChanges = changes.slice(0, -1);
+						newChanges.push({
+							originalStart: lastChange.originalStart,
+							originalLength: lastChange.originalLength,
+							modifiedStart: lastChange.modifiedStart,
+							modifiedLength: lastChange.modifiedLength + appendLength
+						});
+					} else {
+						newChanges = [...changes, {
+							originalStart: originalValue.length,
+							originalLength: 0,
+							modifiedStart: lastRequest.newValue.length,
+							modifiedLength: appendLength
+						}];
+					}
+				} else {
+					newChanges = [{
+						originalStart: originalValue.length,
+						originalLength: 0,
+						modifiedStart: lastRequest.newValue.length,
+						modifiedLength: appendLength
+					}];
 				}
+				lastRequest = {
+					originalValue,
+					newValue,
+					changes: newChanges
+				};
+				return newChanges;
 			}
 		}
-		lastRequest = {
-			originalValue,
-			newValue,
-			changes
-		};
-		return changes;
 	}
+
+	let changes = smartDiff(originalValue, newValue, true);
+	if (changes) {
+		const deletedChars = deletedCharacters(changes);
+		if (deletedChars > 0) {
+			// For performance reasons, don't compute diff if there is nothing to improve
+			const newChanges = smartDiff(originalValue, newValue, false);
+			if (newChanges && deletedCharacters(newChanges) < deletedChars) {
+				// Disabling smartness seems to be better here
+				changes = newChanges;
+			}
+		}
+	}
+	lastRequest = {
+		originalValue,
+		newValue,
+		changes
+	};
+	return changes;
 }
 
 function deletedCharacters(changes: readonly IDiffChange[]): number {

@@ -259,6 +259,8 @@ declare module 'vscode' {
 		 * Defaults to false (might change).
 		 */
 		enableForwardStability?: boolean;
+
+		isStreaming?: boolean;
 	}
 
 	/**

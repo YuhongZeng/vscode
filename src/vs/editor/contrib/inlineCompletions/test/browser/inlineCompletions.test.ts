@@ -566,6 +566,43 @@ suite('Inline Completions', () => {
 			}
 		);
 	});
+
+	test('Streaming Inline Completions', async function () {
+		const provider = new MockInlineCompletionsProvider();
+		provider.isStreaming = true;
+		await withAsyncTestCodeEditorAndInlineCompletionsModel('',
+			{ fakeClock: true, provider },
+			async ({ editor, editorViewModel, model, context }) => {
+				editor.focus();
+				context.keyboardType('foo');
+				provider.setReturnValue({ insertText: 'foob', range: new Range(1, 1, 1, 4) });
+				model.triggerExplicitly();
+				await timeout(1000);
+
+				assert.deepStrictEqual(context.getAndClearViewStates(), ['', 'foo[b]']);
+
+				// Simulate streaming update
+				provider.setReturnValue({ insertText: 'foobar', range: new Range(1, 1, 1, 4) });
+				provider.fireOnDidChange();
+				await timeout(1000);
+
+				assert.deepStrictEqual(context.getAndClearViewStates(), ['foo[bar]']);
+
+				// Simulate another streaming update with multi-line
+				provider.setReturnValue({ insertText: 'foobar\nbaz', range: new Range(1, 1, 1, 4) });
+				provider.fireOnDidChange();
+				await timeout(1000);
+
+				assert.deepStrictEqual(context.getAndClearViewStates(), ['foo[bar\nbaz]']);
+
+				// Test interruption by typing
+				context.keyboardType('b');
+				await timeout(1000);
+
+				assert.deepStrictEqual(context.getAndClearViewStates(), ['foob[ar\nbaz]', 'foob']);
+			}
+		);
+	});
 });
 
 suite('Multi Cursor Support', () => {

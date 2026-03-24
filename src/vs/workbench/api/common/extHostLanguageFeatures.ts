@@ -1427,9 +1427,12 @@ class InlineCompletionAdapter {
 			list,
 		});
 
+		const isStreaming = this._isAdditionsProposedApiEnabled && !Array.isArray(result) ? (result as any).isStreaming : undefined;
+
 		const items = {
 			pid,
 			languageId: doc.languageId,
+			isStreaming,
 			items: resultItems.map<extHostProtocol.IdentifiableInlineCompletion>((item, idx) => {
 				let command: languages.Command | undefined = undefined;
 				if (item.command) {

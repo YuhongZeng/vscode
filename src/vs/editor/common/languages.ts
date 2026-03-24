@@ -927,6 +927,8 @@ export interface InlineCompletions<TItem extends InlineCompletion = InlineComple
 	 * When set and the user types a suggestion without derivating from it, the inline suggestion is not updated.
 	 */
 	readonly enableForwardStability?: boolean | undefined;
+
+	readonly isStreaming?: boolean | undefined;
 }
 
 export type InlineCompletionCommand = { command: Command; icon?: ThemeIcon };

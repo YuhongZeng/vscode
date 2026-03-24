@@ -1,0 +1,7 @@
+- [x] 架构解耦：`StreamingInlineCompletionsSession` 已被独立创建并接管流式请求生命周期。
+- [x] 前缀消费验证：在流式补全过程中，用户顺着推荐输入任何字符（包含换行符 `\n`），原有的流式生成继续，剩余的 Ghost Text 挂载到新的 `ghostAnchor`，不会发生闪烁或重置。
+- [x] 错误输入验证：在流式补全过程中，用户输入与推荐不符的字符，当前的流式会话立刻中止并销毁，并触发新的推荐。
+- [x] 动态光标合法区域（逃逸检测）验证：流式输出期间，如果用户通过鼠标或键盘将光标移出当前 Ghost Text 覆盖的区域，系统能在 100ms 内向 ExtHost 发生 Cancel 请求，并且立即清除残留。
+- [x] 内存泄漏验证：执行多次流式中断、换行保留和光标逃逸，在开发者工具内存面板中确认没有未销毁的 `Session` 或未清理的 Ghost Text 渲染组件。
+- [x] UI 对接验证：`GhostTextView` 和 `computeGhostText` 能平滑地基于 `ghostAnchor` 渲染内容，打字机效果未受影响。
+- [x] 灰度与回滚测试：配置项 `editor.inlineCompletions.streamingArchitecture` 设置为 legacy 时，能够无缝退回原有的单次状态修补逻辑。

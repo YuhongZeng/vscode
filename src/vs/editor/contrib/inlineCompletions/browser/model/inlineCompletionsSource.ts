@@ -43,7 +43,8 @@ import { TextModelValueReference } from './textModelValueReference.js';
 export class InlineCompletionsSource extends Disposable {
 	private static _requestId = 0;
 
-	private readonly _updateOperation = this._register(new MutableDisposable<UpdateOperation>());
+	private readonly _session = this._register(new MutableDisposable<StreamingInlineCompletionsSession>());
+	public get session() { return this._session.value; }
 
 	private readonly _loggingEnabled;
 	private readonly _sendRequestData;
@@ -135,7 +136,18 @@ export class InlineCompletionsSource extends Disposable {
 
 	public readonly clearOperationOnTextModelChange = derived(this, reader => {
 		this._versionId.read(reader);
-		this._updateOperation.clear();
+		const session = this._session.value;
+		if (session) {
+			const isStreaming = session.isStreaming.read(reader);
+			// Do not clear the operation if it's streaming, BUT if the document version changed significantly
+			// (e.g. newline, which changes the line count or cursor position drastically), we should probably still clear it.
+			// However, to fix the issue where it clears easily at the end of a line, we keep the isStreaming protection.
+			if (!isStreaming) {
+				this._session.clear();
+			}
+		} else {
+			this._session.clear();
+		}
 		return undefined; // always constant
 	});
 
@@ -166,16 +178,20 @@ export class InlineCompletionsSource extends Disposable {
 
 		const target = context.selectedSuggestionInfo ? this.suggestWidgetInlineCompletions.get() : this.inlineCompletions.get();
 
-		if (this._updateOperation.value?.request.satisfies(request)) {
-			return this._updateOperation.value.promise;
-		} else if (target?.request?.satisfies(request)) {
+		const isStreaming = this._session.value?.isStreaming.get();
+
+		// Always reuse promise if request is identical, even for streaming
+		if (this._session.value?.request.satisfies(request)) {
+			return this._session.value.promise || Promise.resolve(true);
+		} else if (!isStreaming && target?.request?.satisfies(request)) {
 			return Promise.resolve(true);
 		}
 
-		const updateOngoing = !!this._updateOperation.value;
-		this._updateOperation.clear();
+		const updateOngoing = !!this._session.value;
+		this._session.clear();
 
-		const source = new CancellationTokenSource();
+		const session = new StreamingInlineCompletionsSession(request);
+		this._session.value = session;
 
 		const promise = (async () => {
 			const store = new DisposableStore();
@@ -206,10 +222,10 @@ export class InlineCompletionsSource extends Disposable {
 				const shouldDebounce = updateOngoing || (withDebounce && context.triggerKind === InlineCompletionTriggerKind.Automatic);
 				if (shouldDebounce) {
 					// This debounces the operation
-					await wait(debounceValue, source.token);
+					await wait(debounceValue, session.token);
 				}
 
-				if (source.token.isCancellationRequested || this._store.isDisposed || this._textModel.getVersionId() !== request.versionId) {
+				if (session.token.isCancellationRequested || this._store.isDisposed || this._textModel.getVersionId() !== request.versionId) {
 					requestResponseInfo.setNoSuggestionReasonIfNotSet('canceled:beforeFetch');
 					return false;
 				}
@@ -231,7 +247,7 @@ export class InlineCompletionsSource extends Disposable {
 				const startTime = new Date();
 				const providerResult = provideInlineCompletions(providers, this._cursorPosition.get(), this._textModel, context, requestInfo, this._languageConfigurationService);
 
-				runWhenCancelled(source.token, () => providerResult.cancelAndDispose({ kind: 'tokenCancellation' }));
+				runWhenCancelled(session.token, () => providerResult.cancelAndDispose({ kind: 'tokenCancellation' }));
 
 				let shouldStopEarly = false;
 				let producedSuggestion = false;
@@ -240,6 +256,15 @@ export class InlineCompletionsSource extends Disposable {
 				for await (const list of providerResult.lists) {
 					if (!list) {
 						continue;
+					}
+					if (list.inlineSuggestions.isStreaming) {
+						session.markAsStreaming();
+					}
+					if (list.inlineSuggestionsData.length > 0) {
+						const suggestion = list.inlineSuggestionsData[0];
+						if (suggestion && suggestion.action?.kind === 'edit' && suggestion.action.insertText) {
+							session.updateBuffer(suggestion.action.insertText);
+						}
 					}
 					list.addRef();
 					store.add(toDisposable(() => list.removeRef(list.inlineSuggestionsData.length === 0 ? { kind: 'empty' } : { kind: 'notTaken' })));
@@ -308,7 +333,7 @@ export class InlineCompletionsSource extends Disposable {
 				if (this._loggingEnabled.get() || this._structuredFetchLogger.isEnabled.get()) {
 					const didAllProvidersReturn = providerResult.didAllProvidersReturn;
 					let error: string | undefined = undefined;
-					if (source.token.isCancellationRequested || this._store.isDisposed || this._textModel.getVersionId() !== request.versionId) {
+					if (session.token.isCancellationRequested || this._store.isDisposed || this._textModel.getVersionId() !== request.versionId) {
 						error = 'canceled';
 					}
 					const result = suggestions.map(c => {
@@ -357,11 +382,11 @@ export class InlineCompletionsSource extends Disposable {
 				requestResponseInfo.setRequestUuid(providerResult.contextWithUuid.requestUuid);
 				if (producedSuggestion) {
 					requestResponseInfo.setHasProducedSuggestion();
-					if (suggestions.length > 0 && source.token.isCancellationRequested) {
+					if (suggestions.length > 0 && session.token.isCancellationRequested) {
 						suggestions.forEach(s => s.setNotShownReasonIfNotSet('canceled:whileAwaitingOtherProviders'));
 					}
 				} else {
-					if (source.token.isCancellationRequested) {
+					if (session.token.isCancellationRequested) {
 						requestResponseInfo.setNoSuggestionReasonIfNotSet('canceled:whileFetching');
 					} else {
 						const completionsQuotaExceeded = this._contextKeyService.getContextKeyValue<boolean>('completionsQuotaExceeded');
@@ -369,17 +394,19 @@ export class InlineCompletionsSource extends Disposable {
 					}
 				}
 
+				session.markAsCompleted();
+
 				const remainingTimeToWait = context.earliestShownDateTime - Date.now();
 				if (remainingTimeToWait > 0) {
-					await wait(remainingTimeToWait, source.token);
+					await wait(remainingTimeToWait, session.token);
 				}
 
 				suggestions.forEach(s => s.addPerformanceMarker('minShowDelayPassed'));
 
-				if (source.token.isCancellationRequested || this._store.isDisposed || this._textModel.getVersionId() !== request.versionId
+				if (session.token.isCancellationRequested || this._store.isDisposed || this._textModel.getVersionId() !== request.versionId
 					|| userJumpedToActiveCompletion.get()  /* In the meantime the user showed interest for the active completion so dont hide it */) {
 					const notShownReason =
-						source.token.isCancellationRequested ? 'canceled:afterMinShowDelay' :
+						session.token.isCancellationRequested ? 'canceled:afterMinShowDelay' :
 							this._store.isDisposed ? 'canceled:disposed' :
 								this._textModel.getVersionId() !== request.versionId ? 'canceled:documentChanged' :
 									userJumpedToActiveCompletion.get() ? 'canceled:userJumped' :
@@ -392,7 +419,9 @@ export class InlineCompletionsSource extends Disposable {
 				this._debounceValue.update(this._textModel, endTime.getTime() - startTime.getTime());
 
 				const cursorPosition = this._cursorPosition.get();
-				this._updateOperation.clear();
+				if (!session.isStreaming.get()) {
+					this._session.clear();
+				}
 				transaction(tx => {
 					/** @description Update completions with provider result */
 					const v = this._state.get();
@@ -421,8 +450,7 @@ export class InlineCompletionsSource extends Disposable {
 			return true;
 		})();
 
-		const updateOperation = new UpdateOperation(request, source, promise);
-		this._updateOperation.value = updateOperation;
+		session.promise = promise;
 
 		return promise;
 	}
@@ -431,7 +459,7 @@ export class InlineCompletionsSource extends Disposable {
 		if (this._store.isDisposed) {
 			return;
 		}
-		this._updateOperation.clear();
+		this._session.clear();
 		const v = this._state.get();
 		this._state.set({
 			inlineCompletions: InlineCompletionsState.createEmpty(),
@@ -554,21 +582,21 @@ export class InlineCompletionsSource extends Disposable {
 	}
 
 	public clearSuggestWidgetInlineCompletions(tx: ITransaction): void {
-		if (this._updateOperation.value?.request.context.selectedSuggestionInfo) {
-			this._updateOperation.clear();
+		if (this._session.value?.request.context.selectedSuggestionInfo) {
+			this._session.clear();
 		}
 	}
 
 	public cancelUpdate(): void {
-		this._updateOperation.clear();
+		this._session.clear();
 	}
 }
 
 class UpdateRequest {
 	constructor(
-		public readonly position: Position,
+		public position: Position,
 		public readonly context: InlineCompletionContextWithoutUuid,
-		public readonly versionId: number,
+		public versionId: number | null,
 		public readonly providers: Set<InlineCompletionsProvider>,
 	) {
 	}
@@ -579,6 +607,7 @@ class UpdateRequest {
 			&& (other.context.triggerKind === InlineCompletionTriggerKind.Automatic
 				|| this.context.triggerKind === InlineCompletionTriggerKind.Explicit)
 			&& this.versionId === other.versionId
+			&& this.context.changeHint === other.context.changeHint
 			&& isSubset(other.providers, this.providers);
 	}
 
@@ -615,16 +644,55 @@ function isSubset<T>(set1: Set<T>, set2: Set<T>): boolean {
 	return [...set1].every(item => set2.has(item));
 }
 
-class UpdateOperation implements IDisposable {
+export class StreamingInlineCompletionsSession extends Disposable {
+	private readonly _cancellationTokenSource = new CancellationTokenSource();
+	public readonly token = this._cancellationTokenSource.token;
+
+	private readonly _isStreaming = observableValue<boolean>(this, false);
+	public readonly isStreaming: IObservable<boolean> = this._isStreaming;
+
+	public promise: Promise<boolean> | undefined;
+
+	private _buffer: string = '';
+	private _ghostAnchor: number = 0;
+
 	constructor(
 		public readonly request: UpdateRequest,
-		public readonly cancellationTokenSource: CancellationTokenSource,
-		public readonly promise: Promise<boolean>,
 	) {
+		super();
 	}
 
-	dispose() {
-		this.cancellationTokenSource.cancel();
+	override dispose() {
+		this._cancellationTokenSource.cancel();
+		super.dispose();
+	}
+
+	markAsStreaming(): void {
+		this._isStreaming.set(true, undefined);
+	}
+
+	markAsCompleted(): void {
+		this._isStreaming.set(false, undefined);
+	}
+
+	public get buffer(): string { return this._buffer; }
+	public set buffer(value: string) { this._buffer = value; }
+
+	public get ghostAnchor(): number { return this._ghostAnchor; }
+
+	public updateBuffer(fullText: string): void {
+		this._buffer = fullText.substring(this._ghostAnchor);
+	}
+
+	public tryConsumeInput(textChange: string, newVersionId: number | null, newPosition: Position): boolean {
+		if (this._buffer.startsWith(textChange)) {
+			this._ghostAnchor += textChange.length;
+			this._buffer = this._buffer.substring(textChange.length);
+			this.request.versionId = newVersionId;
+			this.request.position = newPosition;
+			return true;
+		}
+		return false;
 	}
 }
 

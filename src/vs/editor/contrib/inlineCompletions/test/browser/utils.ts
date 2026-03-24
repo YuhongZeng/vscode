@@ -58,6 +58,8 @@ export class MockInlineCompletionsProvider implements InlineCompletionsProvider 
 		this.delayMs = delayMs;
 	}
 
+	public isStreaming: boolean = false;
+
 	public getAndClearCallHistory() {
 		const history = [...this.callHistory];
 		this.callHistory = [];
@@ -105,7 +107,7 @@ export class MockInlineCompletionsProvider implements InlineCompletionsProvider 
 			await timeout(this.delayMs);
 		}
 
-		return { items: result, enableForwardStability: this.enableForwardStability };
+		return { items: result, enableForwardStability: this.enableForwardStability, isStreaming: this.isStreaming };
 	}
 	disposeInlineCompletions() { }
 	handleItemDidShow() { }
