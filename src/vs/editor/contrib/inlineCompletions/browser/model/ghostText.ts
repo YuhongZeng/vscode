@@ -43,17 +43,30 @@ export class GhostText {
 		if (this.parts.length === 0) {
 			return '';
 		}
-		const lastPart = this.parts[this.parts.length - 1];
 
-		const cappedLineText = lineText.substr(0, lastPart.column - 1);
-		const text = new TextEdit([
-			...this.parts.map(p => new TextReplacement(
-				Range.fromPositions(new Position(1, p.column)),
-				p.lines.map(line => line.line).join('\n')
-			)),
-		]).applyToString(cappedLineText);
+		const sortedParts = [...this.parts].sort((a, b) => a.column - b.column);
+		const lastPart = sortedParts[sortedParts.length - 1];
 
-		return text.substring(this.parts[0].column - 1);
+		let cappedLineText = lineText.substring(0, Math.max(0, lastPart.column - 1));
+		if (cappedLineText.length < lastPart.column - 1) {
+			cappedLineText = cappedLineText.padEnd(lastPart.column - 1, ' ');
+		}
+
+		const replacements: TextReplacement[] = [];
+		for (const p of sortedParts) {
+			const col = Math.max(1, p.column);
+			const text = p.lines.map(line => line.line).join('\n');
+			if (replacements.length > 0 && replacements[replacements.length - 1].range.startColumn === col) {
+				const last = replacements[replacements.length - 1];
+				replacements[replacements.length - 1] = new TextReplacement(last.range, last.text + text);
+			} else {
+				replacements.push(new TextReplacement(Range.fromPositions(new Position(1, col), new Position(1, col)), text));
+			}
+		}
+
+		const text = new TextEdit(replacements).applyToString(cappedLineText);
+
+		return text.substring(Math.max(0, this.parts[0].column - 1));
 	}
 
 	isEmpty(): boolean {

@@ -18,7 +18,7 @@ import { INotificationService, Severity } from '../../../../../platform/notifica
 import { ICodeEditor } from '../../../../browser/editorBrowser.js';
 import { EditorAction, ServicesAccessor } from '../../../../browser/editorExtensions.js';
 import { EditorContextKeys } from '../../../../common/editorContextKeys.js';
-import { InlineCompletionsProvider } from '../../../../common/languages.js';
+import { InlineCompletion, InlineCompletions, InlineCompletionsProvider } from '../../../../common/languages.js';
 import { ILanguageFeaturesService } from '../../../../common/services/languageFeatures.js';
 import { Context as SuggestContext } from '../../../suggest/browser/suggest.js';
 import { hideInlineCompletionId, inlineSuggestCommitAlternativeActionId, inlineSuggestCommitId, jumpToNextInlineEditId, showNextInlineSuggestionActionId, showPreviousInlineSuggestionActionId, toggleShowCollapsedId } from './commandIds.js';
@@ -67,7 +67,7 @@ export class ShowPreviousInlineSuggestionAction extends EditorAction {
 
 export const providerIdSchemaUri = 'vscode://schemas/inlineCompletionProviderIdArgs';
 
-export function inlineCompletionProviderGetMatcher(provider: InlineCompletionsProvider): string[] {
+export function inlineCompletionProviderGetMatcher(provider: InlineCompletionsProvider<InlineCompletions<InlineCompletion>>): string[] {
 	const result: string[] = [];
 	if (provider.providerId) {
 		result.push(provider.providerId.toStringWithoutVersion());
@@ -81,6 +81,7 @@ const argsValidator = vUnion(vObj({
 	providerId: vOptionalProp(vWithJsonSchemaRef(providerIdSchemaUri, vString())),
 	explicit: vOptionalProp(vBoolean()),
 	changeHintData: vOptionalProp(vUnchecked()),
+	force: vOptionalProp(vBoolean()),
 }), vUndefined());
 
 export class TriggerInlineSuggestionAction extends EditorAction {
@@ -120,6 +121,7 @@ export class TriggerInlineSuggestionAction extends EditorAction {
 				provider: provider,
 				explicit: validatedArgs?.explicit ?? true,
 				changeHint: validatedArgs?.changeHintData ? { data: validatedArgs.changeHintData } : undefined,
+				force: validatedArgs?.force,
 			});
 			controller?.playAccessibilitySignal(tx);
 		});

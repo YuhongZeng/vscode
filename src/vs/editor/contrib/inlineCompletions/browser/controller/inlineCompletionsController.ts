@@ -254,9 +254,7 @@ export class InlineCompletionsController extends Disposable {
 				}
 				const m = this.model.get();
 				if (!m) { return; }
-				if (m.state.get()?.kind === 'ghostText') {
-					this.model.get()?.stop();
-				}
+				m.stop();
 			}
 		}));
 
@@ -288,8 +286,8 @@ export class InlineCompletionsController extends Disposable {
 			}
 
 			if (!model) { return; }
-			if (model.state.read(undefined)?.inlineSuggestion?.isFromExplicitRequest && model.inlineEditAvailable.read(undefined)) {
-				// dont hide inline edits on blur when requested explicitly
+			if (model.state.read(undefined)?.inlineSuggestion?.isFromExplicitRequest) {
+				// dont hide inline completions or inline edits on blur when requested explicitly
 				return;
 			}
 

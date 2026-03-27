@@ -4413,9 +4413,10 @@ export interface IInlineSuggestOptions {
 	 * Use `prefix` to only show ghost text if the text to replace is a prefix of the suggestion text.
 	 * Use `subword` to only show ghost text if the replace text is a subword of the suggestion text.
 	 * Use `subwordSmart` to only show ghost text if the replace text is a subword of the suggestion text, but the subword must start after the cursor position.
+	 * Use `ghostTextPrefer` to always show ghost text even if there are multiple suggestion texts or modifications.
 	 * Defaults to `prefix`.
 	*/
-	mode?: 'prefix' | 'subword' | 'subwordSmart';
+	mode?: 'prefix' | 'subword' | 'subwordSmart' | 'ghostTextPrefer';
 
 	showToolbar?: 'always' | 'onHover' | 'never';
 
@@ -4489,7 +4490,7 @@ class InlineEditorSuggest extends BaseEditorOption<EditorOption.inlineSuggest, I
 	constructor() {
 		const defaults: InternalInlineSuggestOptions = {
 			enabled: true,
-			mode: 'subwordSmart',
+			mode: 'ghostTextPrefer',
 			showToolbar: 'onHover',
 			suppressSuggestions: false,
 			keepOnBlur: false,
@@ -4530,6 +4531,18 @@ class InlineEditorSuggest extends BaseEditorOption<EditorOption.inlineSuggest, I
 						nls.localize('inlineSuggest.showToolbar.never', "Never show the inline suggestion toolbar."),
 					],
 					description: nls.localize('inlineSuggest.showToolbar', "Controls when to show the inline suggestion toolbar."),
+				},
+				'editor.inlineSuggest.mode': {
+					type: 'string',
+					default: defaults.mode,
+					enum: ['prefix', 'subword', 'subwordSmart', 'ghostTextPrefer'],
+					enumDescriptions: [
+						nls.localize('inlineSuggest.mode.prefix', "Only show ghost text if the text to replace is a prefix of the suggestion text."),
+						nls.localize('inlineSuggest.mode.subword', "Only show ghost text if the replace text is a subword of the suggestion text."),
+						nls.localize('inlineSuggest.mode.subwordSmart', "Only show ghost text if the replace text is a subword of the suggestion text, but the subword must start after the cursor position."),
+						nls.localize('inlineSuggest.mode.ghostTextPrefer', "Always show ghost text even if there are multiple suggestion texts or modifications."),
+					],
+					description: nls.localize('inlineSuggest.mode', "Configures the mode of inline suggestions."),
 				},
 				'editor.inlineSuggest.syntaxHighlightingEnabled': {
 					type: 'boolean',
@@ -4636,7 +4649,7 @@ class InlineEditorSuggest extends BaseEditorOption<EditorOption.inlineSuggest, I
 		const input = _input as Unknown<IInlineSuggestOptions>;
 		return {
 			enabled: boolean(input.enabled, this.defaultValue.enabled),
-			mode: stringSet(input.mode, this.defaultValue.mode, ['prefix', 'subword', 'subwordSmart']),
+			mode: stringSet(input.mode, this.defaultValue.mode, ['prefix', 'subword', 'subwordSmart', 'ghostTextPrefer']),
 			showToolbar: stringSet(input.showToolbar, this.defaultValue.showToolbar, ['always', 'onHover', 'never']),
 			suppressSuggestions: boolean(input.suppressSuggestions, this.defaultValue.suppressSuggestions),
 			keepOnBlur: boolean(input.keepOnBlur, this.defaultValue.keepOnBlur),
@@ -4914,7 +4927,7 @@ export interface ISuggestOptions {
 	/**
 	 * Configures the mode of the preview.
 	*/
-	previewMode?: 'prefix' | 'subword' | 'subwordSmart';
+	previewMode?: 'prefix' | 'subword' | 'subwordSmart' | 'ghostTextPrefer';
 	/**
 	 * Show details inline with the label. Defaults to true.
 	 */
@@ -5329,7 +5342,7 @@ class EditorSuggest extends BaseEditorOption<EditorOption.suggest, ISuggestOptio
 			showIcons: boolean(input.showIcons, this.defaultValue.showIcons),
 			showStatusBar: boolean(input.showStatusBar, this.defaultValue.showStatusBar),
 			preview: boolean(input.preview, this.defaultValue.preview),
-			previewMode: stringSet(input.previewMode, this.defaultValue.previewMode, ['prefix', 'subword', 'subwordSmart']),
+			previewMode: stringSet(input.previewMode, this.defaultValue.previewMode, ['prefix', 'subword', 'subwordSmart', 'ghostTextPrefer']),
 			showInlineDetails: boolean(input.showInlineDetails, this.defaultValue.showInlineDetails),
 			showMethods: boolean(input.showMethods, this.defaultValue.showMethods),
 			showFunctions: boolean(input.showFunctions, this.defaultValue.showFunctions),

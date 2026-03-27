@@ -19,14 +19,23 @@ import { singleTextRemoveCommonPrefix } from './singleTextEditHelpers.js';
 export function computeGhostText(
 	edit: TextReplacement,
 	model: ITextModel,
-	mode: 'prefix' | 'subword' | 'subwordSmart',
+	mode: 'prefix' | 'subword' | 'subwordSmart' | 'ghostTextPrefer',
 	cursorPosition?: Position,
 	previewSuffixLength = 0
 ): GhostText | undefined {
 	let e = singleTextRemoveCommonPrefix(edit, model);
 
-	if (e.range.endLineNumber !== e.range.startLineNumber) {
-		// This edit might span multiple lines, but the first lines must be a common prefix.
+	if (mode === 'ghostTextPrefer') {
+		if (e.text.length === 0) {
+			return undefined;
+		}
+		return new GhostText(
+			e.range.endLineNumber,
+			[new GhostTextPart(e.range.endColumn, e.text, false)]
+		);
+	}
+
+	if (e.range.startLineNumber !== e.range.endLineNumber) {
 		return undefined;
 	}
 
@@ -77,40 +86,52 @@ export function computeGhostText(
 
 	if (mode === 'prefix') {
 		const filteredChanges = changes.filter(c => c.originalLength === 0);
-		if (filteredChanges.length > 1 || filteredChanges.length === 1 && filteredChanges[0].originalStart !== valueToBeReplaced.length) {
-			// Prefixes only have a single change.
+		if (filteredChanges.length > 1 || (filteredChanges.length === 1 && filteredChanges[0].originalStart !== valueToBeReplaced.length)) {
 			return undefined;
 		}
 	}
 
 	const previewStartInCompletionText = e.text.length - previewSuffixLength;
 
+	const groupedChanges = new Map<number, { modifiedStart: number; modifiedLength: number; originalLength: number }[]>();
 	for (const c of changes) {
 		const insertColumn = e.range.startColumn + c.originalStart + c.originalLength;
+		const existing = groupedChanges.get(insertColumn) || [];
+		existing.push(c);
+		groupedChanges.set(insertColumn, existing);
+	}
 
-		if (mode === 'subwordSmart' && cursorPosition && cursorPosition.lineNumber === e.range.startLineNumber && insertColumn < cursorPosition.column) {
-			// No ghost text before cursor
-			return undefined;
+	const sortedColumns = Array.from(groupedChanges.keys()).sort((a, b) => a - b);
+
+	for (const column of sortedColumns) {
+		const changesAtColumn = groupedChanges.get(column)!;
+		let combinedText = '';
+		let combinedItalicText = '';
+
+		for (const c of changesAtColumn) {
+			if (mode === 'subwordSmart' && cursorPosition && cursorPosition.lineNumber === e.range.startLineNumber && column < cursorPosition.column) {
+				// No ghost text before cursor
+				return undefined;
+			}
+
+			if (c.modifiedLength === 0) {
+				continue;
+			}
+
+			const modifiedEnd = c.modifiedStart + c.modifiedLength;
+			const nonPreviewTextEnd = Math.max(c.modifiedStart, Math.min(modifiedEnd, previewStartInCompletionText));
+			const nonPreviewText = e.text.substring(c.modifiedStart, nonPreviewTextEnd);
+			const italicText = e.text.substring(nonPreviewTextEnd, Math.max(c.modifiedStart, modifiedEnd));
+
+			combinedText += nonPreviewText;
+			combinedItalicText += italicText;
 		}
 
-		if (c.originalLength > 0) {
-			return undefined;
+		if (combinedText.length > 0) {
+			parts.push(new GhostTextPart(column, combinedText, false));
 		}
-
-		if (c.modifiedLength === 0) {
-			continue;
-		}
-
-		const modifiedEnd = c.modifiedStart + c.modifiedLength;
-		const nonPreviewTextEnd = Math.max(c.modifiedStart, Math.min(modifiedEnd, previewStartInCompletionText));
-		const nonPreviewText = e.text.substring(c.modifiedStart, nonPreviewTextEnd);
-		const italicText = e.text.substring(nonPreviewTextEnd, Math.max(c.modifiedStart, modifiedEnd));
-
-		if (nonPreviewText.length > 0) {
-			parts.push(new GhostTextPart(insertColumn, nonPreviewText, false));
-		}
-		if (italicText.length > 0) {
-			parts.push(new GhostTextPart(insertColumn, italicText, true));
+		if (combinedItalicText.length > 0) {
+			parts.push(new GhostTextPart(column, combinedItalicText, true));
 		}
 	}
 

@@ -268,7 +268,7 @@ export class InlineCompletionItem extends InlineSuggestionItemBase {
 
 		const insertText = action.insertText.replace(/\r\n|\r|\n/g, textModel.getEOL());
 
-		const edit = reshapeInlineCompletion(new StringReplacement(transformer.getOffsetRange(action.range), insertText), textModel);
+		const edit = new StringReplacement(transformer.getOffsetRange(action.range), insertText);
 		const trimmedEdit = edit.removeCommonSuffixAndPrefix(textModel.getValue());
 		const textEdit = transformer.getTextReplacement(edit);
 
@@ -376,8 +376,7 @@ export class InlineCompletionItem extends InlineSuggestionItemBase {
 	}
 
 	public isVisible(model: ITextModel, cursorPosition: Position): boolean {
-		const singleTextEdit = this.getSingleTextEdit();
-		return inlineCompletionIsVisible(singleTextEdit, this._originalRange, model, cursorPosition);
+		return inlineCompletionIsVisible(this.getSingleTextEdit(), this._originalRange, model, cursorPosition);
 	}
 
 	override computeEditKind(model: ITextModel): InlineSuggestionEditKind | undefined {
@@ -772,17 +771,6 @@ class SingleUpdatedNextEdit {
 	}
 }
 
-function reshapeInlineCompletion(edit: StringReplacement, textModel: TextModelValueReference): StringReplacement {
-	// If the insertion is a multi line insertion starting on the next line
-	// Move it forwards so that the multi line insertion starts on the current line
-	const eol = textModel.getEOL();
-	if (edit.replaceRange.isEmpty && edit.newText.includes(eol)) {
-		edit = reshapeMultiLineInsertion(edit, textModel);
-	}
-
-	return edit;
-}
-
 function reshapeInlineEdit(edit: StringReplacement, originalText: string, totalInnerEdits: number, textModel: TextModelValueReference): StringReplacement {
 	// TODO: EOL are not properly trimmed by the diffAlgorithm #12680
 	const eol = textModel.getEOL();
@@ -838,7 +826,7 @@ function reshapeMultiLineInsertion(edit: StringReplacement, textModel: TextModel
 	// If the insertion ends with a new line and is inserted at the start of a line which has text,
 	// we move the insertion to the end of the previous line if possible
 	if (startColumn === 1 && startLineNumber > 1 && edit.newText.endsWith(eol) && !edit.newText.startsWith(eol)) {
-		return new StringReplacement(edit.replaceRange.delta(-1), eol + edit.newText.slice(0, -eol.length));
+		return new StringReplacement(edit.replaceRange.delta(-eol.length), eol + edit.newText.slice(0, -eol.length));
 	}
 
 	return edit;

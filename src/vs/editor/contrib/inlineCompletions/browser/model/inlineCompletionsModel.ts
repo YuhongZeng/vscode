@@ -25,7 +25,7 @@ import { Selection } from '../../../../common/core/selection.js';
 import { TextReplacement, TextEdit } from '../../../../common/core/edits/textEdit.js';
 import { TextLength } from '../../../../common/core/text/textLength.js';
 import { ScrollType } from '../../../../common/editorCommon.js';
-import { IInlineCompletionChangeHint, InlineCompletionEndOfLifeReasonKind, InlineCompletion, InlineCompletionTriggerKind, PartialAcceptTriggerKind, InlineCompletionsProvider, InlineCompletionCommand } from '../../../../common/languages.js';
+import { IInlineCompletionChangeHint, InlineCompletionEndOfLifeReasonKind, InlineCompletion, InlineCompletions, InlineCompletionTriggerKind, PartialAcceptTriggerKind, InlineCompletionsProvider, InlineCompletionCommand } from '../../../../common/languages.js';
 import { ILanguageConfigurationService } from '../../../../common/languages/languageConfigurationRegistry.js';
 import { EndOfLinePreference, IModelDeltaDecoration, ITextModel } from '../../../../common/model.js';
 import { TextModelText } from '../../../../common/model/textModelText.js';
@@ -59,10 +59,10 @@ export class InlineCompletionsModel extends Disposable {
 	private readonly _source;
 	private readonly _isActive = observableValue<boolean>(this, false);
 	private readonly _onlyRequestInlineEditsSignal = observableSignal(this);
-	private readonly _forceUpdateExplicitlySignal = observableSignal(this);
+	private readonly _forceUpdateExplicitlySignal = observableSignal<{ force?: boolean }>(this);
 	private readonly _noDelaySignal = observableSignal(this);
 
-	private readonly _fetchSpecificProviderSignal = observableSignal<{ provider: InlineCompletionsProvider; changeHint?: IInlineCompletionChangeHint } | undefined>(this);
+	private readonly _fetchSpecificProviderSignal = observableSignal<{ provider: InlineCompletionsProvider<InlineCompletions<InlineCompletion>>; changeHint?: IInlineCompletionChangeHint } | undefined>(this);
 
 	// We use a semantic id to keep the same inline completion selected even if the provider reorders the completions.
 	private readonly _selectedInlineCompletionId = observableValue<string | undefined>(this, undefined);
@@ -334,10 +334,11 @@ export class InlineCompletionsModel extends Disposable {
 				inlineCompletionTriggerKind: InlineCompletionTriggerKind.Automatic,
 				onlyRequestInlineEdits: false,
 				shouldDebounce: true,
-				provider: undefined as InlineCompletionsProvider | undefined,
+				provider: undefined as InlineCompletionsProvider<InlineCompletions<InlineCompletion>> | undefined,
 				changeHint: undefined as IInlineCompletionChangeHint | undefined,
 				textChange: false,
 				changeReason: '',
+				force: false,
 			}),
 			handleChange: (ctx, changeSummary) => {
 				/** @description fetch inline completions */
@@ -349,8 +350,14 @@ export class InlineCompletionsModel extends Disposable {
 					changeSummary.changeReason = detailedReasons.length > 0 ? detailedReasons[0].getType() : '';
 					changeSummary.textChange = true;
 				} else if (ctx.didChange(this._forceUpdateExplicitlySignal)) {
+					const force = ctx.change?.force ?? false;
 					changeSummary.preserveCurrentCompletion = true;
 					changeSummary.inlineCompletionTriggerKind = InlineCompletionTriggerKind.Explicit;
+					changeSummary.shouldDebounce = false;
+					changeSummary.force = force;
+					if (force) {
+						changeSummary.dontRefetch = false;
+					}
 				} else if (ctx.didChange(this.dontRefetchSignal)) {
 					changeSummary.dontRefetch = true;
 				} else if (ctx.didChange(this._onlyRequestInlineEditsSignal)) {
@@ -454,7 +461,7 @@ export class InlineCompletionsModel extends Disposable {
 		const availableProviders = this.getAvailableProviders(providers.providers);
 		requestInfo.availableProviders = availableProviders.map(p => p.providerId).filter(isDefined);
 
-		return this._source.fetch(availableProviders, providers.label, context, itemToPreserve?.identity, changeSummary.shouldDebounce, userJumpedToActiveCompletion, requestInfo);
+		return this._source.fetch(availableProviders, providers.label, context, itemToPreserve?.identity, changeSummary.shouldDebounce, userJumpedToActiveCompletion, requestInfo, changeSummary.force);
 	});
 
 	// TODO: This is not an ideal implementation of excludesGroupIds, however as this is currently still behind proposed API
@@ -479,7 +486,7 @@ export class InlineCompletionsModel extends Disposable {
 		return availableProviders;
 	}
 
-	public async trigger(tx?: ITransaction, options: { onlyFetchInlineEdits?: boolean; noDelay?: boolean; provider?: InlineCompletionsProvider; explicit?: boolean; changeHint?: IInlineCompletionChangeHint } = {}): Promise<void> {
+	public async trigger(tx?: ITransaction, options: { onlyFetchInlineEdits?: boolean; noDelay?: boolean; provider?: InlineCompletionsProvider<InlineCompletions<InlineCompletion>>; explicit?: boolean; changeHint?: IInlineCompletionChangeHint; force?: boolean } = {}): Promise<void> {
 		subtransaction(tx, tx => {
 			if (options.onlyFetchInlineEdits) {
 				this._onlyRequestInlineEditsSignal.trigger(tx);
@@ -491,7 +498,7 @@ export class InlineCompletionsModel extends Disposable {
 
 			if (options.explicit) {
 				this._inAcceptFlow.set(true, tx);
-				this._forceUpdateExplicitlySignal.trigger(tx);
+				this._forceUpdateExplicitlySignal.trigger(tx, { force: options.force });
 			}
 			if (options.provider) {
 				this._fetchSpecificProviderSignal.trigger(tx, { provider: options.provider, changeHint: options.changeHint });
@@ -667,7 +674,11 @@ export class InlineCompletionsModel extends Disposable {
 			const fullEdit = augmentation?.edit ?? suggestCompletionEdit;
 			const fullEditPreviewLength = augmentation ? augmentation.edit.text.length - suggestCompletionEdit.text.length : 0;
 
-			const mode = this._suggestPreviewMode.read(reader);
+			let mode = this._suggestPreviewMode.read(reader);
+			if (mode === 'ghostTextPrefer') {
+				mode = 'prefix';
+			}
+
 			const positions = this._positions.read(reader);
 			const allPotentialEdits = [fullEdit, ...getSecondaryEdits(this.textModel, positions, fullEdit)];
 			const validEditsAndGhostTexts = allPotentialEdits
