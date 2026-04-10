@@ -175,6 +175,9 @@ export class TestNativeHostService implements INativeHostService {
 	async windowsGetStringRegKey(hive: 'HKEY_CURRENT_USER' | 'HKEY_LOCAL_MACHINE' | 'HKEY_CLASSES_ROOT' | 'HKEY_USERS' | 'HKEY_CURRENT_CONFIG', path: string, name: string): Promise<string | undefined> { return undefined; }
 	async createZipFile(zipPath: URI, files: { path: string; contents: string }[]): Promise<void> { }
 	async profileRenderer(): Promise<any> { throw new Error(); }
+	async startRendererHeapSampling(): Promise<void> { }
+	async dumpRendererHeapSamplingProfile(reason?: string): Promise<string> { return ''; }
+	async saveRendererBreadcrumbs(reason?: string, breadcrumbs?: any[]): Promise<void> { }
 	async getScreenshot(rect?: IRectangle): Promise<VSBuffer | undefined> { return undefined; }
 	async showToast(options: IToastOptions): Promise<IToastResult> { return { supported: false, clicked: false }; }
 	async clearToast(id: string): Promise<void> { }

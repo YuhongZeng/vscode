@@ -28,6 +28,8 @@ import { IDisposable } from '../../../base/common/lifecycle.js';
 import '../common/extHost.common.services.js';
 import './extHost.node.services.js';
 import { createRequire } from 'node:module';
+import { OOMDiagnosticMonitor } from '../../../base/common/oomDiagnostics.js';
+import '../../../base/node/oomDiagnostics.js'; // 导入以触发 Node 单例注册
 const require = createRequire(import.meta.url);
 
 interface ParsedExtHostArgs {
@@ -471,5 +473,8 @@ async function startExtensionHostProcess(): Promise<void> {
 	// rewrite onTerminate-function to be a proper shutdown
 	onTerminate = (reason: string) => extensionHostMain.terminate(reason);
 }
+
+// 启动 OOM 内存监控器
+OOMDiagnosticMonitor.getInstance().startMonitoring('ExtensionHost');
 
 startExtensionHostProcess().catch((err) => console.log(err));

@@ -67,6 +67,7 @@ import { AccountPolicyService } from '../services/policies/common/accountPolicyS
 import { MultiplexPolicyService } from '../services/policies/common/multiplexPolicyService.js';
 import { WorkbenchModeService } from '../services/layout/browser/workbenchModeService.js';
 import { IWorkbenchModeService } from '../services/layout/common/workbenchModeService.js';
+import { OOMDiagnosticMonitor } from '../../base/common/oomDiagnostics.js';
 
 export class DesktopMain extends Disposable {
 
@@ -118,6 +119,15 @@ export class DesktopMain extends Disposable {
 		// Init services and wait for DOM to be ready in parallel
 		const [services] = await Promise.all([this.initServices(), domContentLoaded(mainWindow)]);
 
+		// Start OOM Diagnostics Monitor for the Renderer Process (Breadcrumbs only in Renderer)
+		OOMDiagnosticMonitor.getInstance().startMonitoring('Renderer');
+		this.startRendererOOMPolling(
+			services.serviceCollection.get(IMainProcessService) as IMainProcessService,
+			this.configuration.windowId,
+			services.configurationService,
+			services.logService
+		);
+
 		// Apply zoom level early once we have a configuration service
 		// and before the workbench is created to prevent flickering.
 		// We also need to respect that zoom level can be configured per
@@ -153,6 +163,85 @@ export class DesktopMain extends Disposable {
 		}
 
 		applyZoom(zoomLevel, mainWindow);
+	}
+
+	private startRendererOOMPolling(mainProcessService: IMainProcessService, windowId: number, configurationService: IConfigurationService, logService: ILogService) {
+		const isOOMDiagnosticsEnabled = () => configurationService.getValue<boolean>('developer.enableOOMDiagnostics') === true;
+
+		let checkInterval = 5000;
+		let dumpLock: Promise<void> | null = null;
+		let lastDumpedMB = 0; // Record memory size of the last dump
+		const thresholdMB = 1500; // 1.5GB
+		const dumpGrowthThresholdMB = 200; // Memory must grow by 200MB since last dump to trigger again
+
+		const checkMemory = async () => {
+			if (dumpLock || !isOOMDiagnosticsEnabled()) {
+				setTimeout(checkMemory, checkInterval);
+				return;
+			}
+
+			const vscodeProcess = (globalThis as unknown as { vscode?: { process?: { getProcessMemoryInfo?: () => Promise<{ private: number }> } } }).vscode?.process;
+			if (vscodeProcess && typeof vscodeProcess.getProcessMemoryInfo === 'function') {
+				try {
+					const info = await vscodeProcess.getProcessMemoryInfo();
+					const currentMB = Math.round(info.private / 1024);
+
+					if (currentMB > thresholdMB * 0.8) {
+						checkInterval = 1000; // Close to threshold, increase polling frequency
+					} else {
+						checkInterval = 5000;
+					}
+
+					// If over 1.5G threshold, and grew by 200MB since last dump (or first time over threshold)
+					if (currentMB > thresholdMB && (currentMB > lastDumpedMB + dumpGrowthThresholdMB)) {
+						if (dumpLock) {
+							return;
+						}
+
+						dumpLock = (async () => {
+							logService.warn(`[OOM Monitor] Renderer memory (${currentMB}MB) exceeded threshold. Last dump was ${lastDumpedMB}MB. Triggering CDP Heap Sampling and Breadcrumbs IPC...`);
+
+							try {
+								const monitor = OOMDiagnosticMonitor.getInstance();
+								monitor.recordEvent('SYSTEM', 'OOM_THRESHOLD_REACHED', currentMB);
+
+								// 1. Tell main process to dump CDP sampling profile
+								await mainProcessService.getChannel('nativeHost').call('dumpRendererHeapSamplingProfile', [windowId, 'RendererOOM']);
+
+								// 2. Send breadcrumbs to main process to save
+								await mainProcessService.getChannel('nativeHost').call('saveRendererBreadcrumbs', [windowId, 'RendererOOM', monitor.getBreadcrumbsSnapshot()]);
+
+								lastDumpedMB = currentMB; // Update high watermark
+							} catch (err) {
+								logService.error('[OOM Monitor] Failed to save renderer diagnostics:', err);
+							} finally {
+								// Shorten cooldown to 10 seconds to catch fast-growing leaks
+								setTimeout(() => { dumpLock = null; }, 10000);
+							}
+						})();
+
+						await dumpLock;
+					}
+				} catch (err) {
+					// Ignore errors fetching memory
+				}
+			}
+
+			setTimeout(checkMemory, checkInterval);
+		};
+
+		// Initial start sampling if enabled
+		configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('developer.enableOOMDiagnostics') && isOOMDiagnosticsEnabled()) {
+				mainProcessService.getChannel('nativeHost').call('startRendererHeapSampling', [windowId]).catch((err: unknown) => logService.error('[OOM Monitor] Failed to start CDP sampling', err as Error));
+			}
+		});
+
+		if (isOOMDiagnosticsEnabled()) {
+			mainProcessService.getChannel('nativeHost').call('startRendererHeapSampling', [windowId]).catch((err: unknown) => logService.error('[OOM Monitor] Failed to start CDP sampling', err as Error));
+		}
+
+		setTimeout(checkMemory, checkInterval);
 	}
 
 	private getExtraClasses(): string[] {

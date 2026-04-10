@@ -178,3 +178,102 @@ export class StopTracing extends Action2 {
 		}, () => nativeHostService.stopTracing());
 	}
 }
+
+export class TriggerRendererOOMAction extends Action2 {
+
+	constructor() {
+		super({
+			id: 'workbench.action.triggerRendererOOM',
+			title: localize2('triggerRendererOOM', 'Developer: Trigger Renderer OOM'),
+			category: Categories.Developer,
+			f1: true
+		});
+	}
+
+	run(accessor: ServicesAccessor): void {
+		const arr: string[] = [];
+		const mainWindow = (globalThis as unknown as { window: Window & { __oom_leak_arr?: string[] } }).window;
+		if (mainWindow) {
+			mainWindow.__oom_leak_arr = arr;
+		}
+
+		const leak = () => {
+			let currentMB = 0;
+
+			// Try to get current memory to adjust leak speed
+			const vscodeProcess = (globalThis as unknown as { vscode?: { process?: { getProcessMemoryInfo?: () => Promise<{ private: number }> } } }).vscode?.process;
+			if (vscodeProcess && typeof vscodeProcess.getProcessMemoryInfo === 'function') {
+				vscodeProcess.getProcessMemoryInfo().then(info => {
+					currentMB = Math.round(info.private / 1024);
+					this.doLeak(arr, currentMB, leak);
+				}).catch(() => this.doLeak(arr, 0, leak));
+			} else {
+				this.doLeak(arr, 0, leak);
+			}
+		};
+
+		leak();
+	}
+
+	private doLeak(arr: string[], currentMB: number, next: () => void) {
+		// If we don't know the memory or it's safely below 1.2GB, leak FAST (~500MB/s)
+		// If we are getting close to the 1.5GB threshold, leak SLOW (~50MB/s) to let the monitor catch it
+		const iterations = (currentMB === 0 || currentMB < 1200) ? 3000 : 50;
+
+		for (let i = 0; i < iterations; i++) {
+			arr.push(new Array(10000).join('OOM_TEST_DATA'));
+		}
+
+		// We don't stop leaking here because we WANT to simulate a real crash (white screen)
+		// after the monitor has had a chance to trigger the heap snapshot.
+		if (currentMB > 1800) {
+			console.log(`[OOM Test] Memory at ${currentMB}MB. Approaching crash limit...`);
+		}
+
+		const mainWindow = (globalThis as unknown as { window: Window }).window;
+		if (mainWindow) {
+			mainWindow.setTimeout(next, 100);
+		}
+	}
+}
+
+export class TriggerPureOOMAction extends Action2 {
+
+	constructor() {
+		super({
+			id: 'workbench.action.triggerPureOOM',
+			title: localize2('triggerPureOOM', 'Developer: Trigger Pure OOM Crash'),
+			category: Categories.Developer,
+			f1: true
+		});
+	}
+
+	override async run(): Promise<void> {
+		console.log('[Pure OOM] Starting memory leak to simulate crash...');
+		const leakArray: unknown[] = [];
+		const vscodeProcess = (globalThis as unknown as { vscode?: { process?: { getProcessMemoryInfo?: () => Promise<{ private: number }> } } }).vscode?.process;
+
+		const mainWindow = (globalThis as unknown as { window: Window }).window;
+		if (mainWindow) {
+			// Continue allocating memory until V8 crash
+			const leakInterval = mainWindow.setInterval(async () => {
+				try {
+					// Allocate ~50MB of strings and objects per iteration
+					for (let i = 0; i < 1000; i++) {
+						leakArray.push(new Array(10000).fill('OOM_TEST_STRING_MEMORY_LEAK_SIMULATION_VSCODE'));
+					}
+
+					if (vscodeProcess && typeof vscodeProcess.getProcessMemoryInfo === 'function') {
+						const info = await vscodeProcess.getProcessMemoryInfo();
+						console.log(`[Pure OOM] Leaking... Private Memory: ${Math.round(info.private / 1024)} MB`);
+					} else {
+						console.log(`[Pure OOM] Leaking...`);
+					}
+				} catch (e) {
+					console.error('Leak hit error early:', e);
+					mainWindow.clearInterval(leakInterval);
+				}
+			}, 50); // Extremely fast leak
+		}
+	}
+}

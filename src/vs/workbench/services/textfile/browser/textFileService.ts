@@ -25,6 +25,7 @@ import { VSBuffer, VSBufferReadable, bufferToStream, VSBufferReadableStream } fr
 import { ITextSnapshot, ITextModel } from '../../../../editor/common/model.js';
 import { ITextResourceConfigurationService } from '../../../../editor/common/services/textResourceConfiguration.js';
 import { PLAINTEXT_LANGUAGE_ID } from '../../../../editor/common/languages/modesRegistry.js';
+import { OOMDiagnosticMonitor } from '../../../../base/common/oomDiagnostics.js';
 import { IFilesConfigurationService } from '../../filesConfiguration/common/filesConfigurationService.js';
 import { IResolvedTextEditorModel } from '../../../../editor/common/services/resolverService.js';
 import { BaseTextEditorModel } from '../../../common/editor/textEditorModel.js';
@@ -179,6 +180,7 @@ export abstract class AbstractTextFileService extends Disposable implements ITex
 	}
 
 	async read(resource: URI, options?: IReadTextFileOptions): Promise<ITextFileContent> {
+		OOMDiagnosticMonitor.getInstance().recordEvent('FILE', 'READ_START', 0, resource.toString());
 		const [bufferStream, decoder] = await this.doRead(resource, {
 			...options,
 			// optimization: since we know that the caller does not
@@ -189,11 +191,13 @@ export abstract class AbstractTextFileService extends Disposable implements ITex
 			preferUnbuffered: true
 		});
 
-		return {
+		const content = {
 			...bufferStream,
 			encoding: decoder.detected.encoding || UTF8,
 			value: await consumeStream(decoder.stream, strings => strings.join(''))
 		};
+		OOMDiagnosticMonitor.getInstance().recordEvent('FILE', 'READ_DONE', content.value.length, resource.toString());
+		return content;
 	}
 
 	async readStream(resource: URI, options?: IReadTextFileOptions): Promise<ITextFileStreamContent> {

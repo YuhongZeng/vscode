@@ -15,6 +15,7 @@ import { DisposableStore, dispose, IDisposable, toDisposable } from '../../../co
 import { revive } from '../../../common/marshalling.js';
 import * as strings from '../../../common/strings.js';
 import { isFunction, isUndefinedOrNull } from '../../../common/types.js';
+import { OOMDiagnosticMonitor } from '../../../common/oomDiagnostics.js';
 
 /**
  * An `IChannel` is an abstraction over a collection of commands.
@@ -374,8 +375,12 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
 
 	private sendBuffer(message: VSBuffer): number {
 		try {
+			const size = message.byteLength;
+			if (size > 1024 * 1024) {
+				OOMDiagnosticMonitor.getInstance().recordEvent('IPC', 'SEND_LARGE_BUFFER', size);
+			}
 			this.protocol.send(message);
-			return message.byteLength;
+			return size;
 		} catch (err) {
 			// noop
 			return 0;
@@ -383,6 +388,10 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
 	}
 
 	private onRawMessage(message: VSBuffer): void {
+		const size = message.byteLength;
+		if (size > 1024 * 1024) {
+			OOMDiagnosticMonitor.getInstance().recordEvent('IPC', 'RECV_LARGE_BUFFER', size);
+		}
 		const reader = new BufferReader(message);
 		const header = deserialize(reader);
 		const body = deserialize(reader);
@@ -719,8 +728,12 @@ export class ChannelClient implements IChannelClient, IDisposable {
 
 	private sendBuffer(message: VSBuffer): number {
 		try {
+			const size = message.byteLength;
+			if (size > 1024 * 1024) {
+				OOMDiagnosticMonitor.getInstance().recordEvent('IPC', 'SEND_LARGE_BUFFER', size);
+			}
 			this.protocol.send(message);
-			return message.byteLength;
+			return size;
 		} catch (err) {
 			// noop
 			return 0;
@@ -728,6 +741,10 @@ export class ChannelClient implements IChannelClient, IDisposable {
 	}
 
 	private onBuffer(message: VSBuffer): void {
+		const size = message.byteLength;
+		if (size > 1024 * 1024) {
+			OOMDiagnosticMonitor.getInstance().recordEvent('IPC', 'RECV_LARGE_BUFFER', size);
+		}
 		const reader = new BufferReader(message);
 		const header = deserialize(reader);
 		const body = deserialize(reader);
