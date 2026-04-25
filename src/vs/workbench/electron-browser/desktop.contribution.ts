@@ -9,7 +9,7 @@ import { MenuRegistry, MenuId, registerAction2 } from '../../platform/actions/co
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions, ConfigurationScope } from '../../platform/configuration/common/configurationRegistry.js';
 import { KeyMod, KeyCode } from '../../base/common/keyCodes.js';
 import { isLinux, isMacintosh, isWindows } from '../../base/common/platform.js';
-import { ConfigureRuntimeArgumentsAction, ToggleDevToolsAction, ReloadWindowWithExtensionsDisabledAction, OpenUserDataFolderAction, ShowGPUInfoAction, ShowContentTracingAction, StopTracing } from './actions/developerActions.js';
+import { ConfigureRuntimeArgumentsAction, ToggleDevToolsAction, ReloadWindowWithExtensionsDisabledAction, OpenUserDataFolderAction, ShowGPUInfoAction, ShowContentTracingAction, StopTracing, TriggerRendererOOMAction, TriggerPureOOMAction } from './actions/developerActions.js';
 import { ZoomResetAction, ZoomOutAction, ZoomInAction, CloseWindowAction, SwitchWindowAction, QuickSwitchWindowAction, NewWindowTabHandler, ShowPreviousWindowTabHandler, ShowNextWindowTabHandler, MoveWindowTabToNewWindowHandler, MergeWindowTabsHandlerHandler, ToggleWindowTabsBarHandler, ToggleWindowAlwaysOnTopAction, DisableWindowAlwaysOnTopAction, EnableWindowAlwaysOnTopAction, CloseOtherWindowsAction } from './actions/windowActions.js';
 import { ContextKeyExpr } from '../../platform/contextkey/common/contextkey.js';
 import { KeybindingsRegistry, KeybindingWeight } from '../../platform/keybinding/common/keybindingsRegistry.js';
@@ -115,6 +115,8 @@ import { MAX_ZOOM_LEVEL, MIN_ZOOM_LEVEL } from '../../platform/window/electron-b
 	registerAction2(ShowGPUInfoAction);
 	registerAction2(ShowContentTracingAction);
 	registerAction2(StopTracing);
+	registerAction2(TriggerRendererOOMAction);
+	registerAction2(TriggerPureOOMAction);
 })();
 
 // Menu
@@ -137,6 +139,20 @@ import { MAX_ZOOM_LEVEL, MIN_ZOOM_LEVEL } from '../../platform/window/electron-b
 	const registry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration);
 
 	// Application
+	registry.registerConfiguration({
+		id: 'developer',
+		order: 20,
+		title: localize('developerConfigurationTitle', "Developer"),
+		type: 'object',
+		properties: {
+			'developer.enableOOMDiagnostics': {
+				type: 'boolean',
+				default: false,
+				description: localize('enableOOMDiagnostics', "Enable Out Of Memory (OOM) Diagnostics. When enabled, VS Code will perform background allocation sampling and log breadcrumbs to help diagnose memory leaks.")
+			}
+		}
+	});
+
 	registry.registerConfiguration({
 		...applicationConfigurationNodeBase,
 		'properties': {

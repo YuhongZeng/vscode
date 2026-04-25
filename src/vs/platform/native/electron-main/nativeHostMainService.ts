@@ -1151,6 +1151,51 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		return result;
 	}
 
+	private _heapSamplingProfiler: { start(): Promise<void>; dumpProfile(reason: string): Promise<string> } | undefined;
+
+	async startRendererHeapSampling(windowId: number | undefined): Promise<void> {
+		const window = this.codeWindowById(windowId);
+		if (!window?.win) {
+			throw new Error('Window not found');
+		}
+
+		if (!this._heapSamplingProfiler) {
+			const module = await import('../../profiling/electron-main/heapSamplingProfiler.js');
+			this._heapSamplingProfiler = new module.HeapSamplingProfiler(window.win, this.logService);
+		}
+
+		await this._heapSamplingProfiler.start();
+	}
+
+	async dumpRendererHeapSamplingProfile(windowId: number | undefined, reason?: string): Promise<string> {
+		if (!this._heapSamplingProfiler) {
+			throw new Error('HeapSamplingProfiler not started');
+		}
+
+		const path = await this._heapSamplingProfiler.dumpProfile(reason || 'OOM');
+		return path;
+	}
+
+	async saveRendererBreadcrumbs(windowId: number | undefined, reason?: string, breadcrumbs?: unknown[]): Promise<void> {
+		if (!breadcrumbs || breadcrumbs.length === 0) {
+			return;
+		}
+
+		const { promises: fs } = await import('fs');
+		const { join } = await import('path');
+		const { tmpdir } = await import('os');
+
+		const dumpDir = join(tmpdir(), 'vscode-oom-diagnostics');
+		await fs.mkdir(dumpDir, { recursive: true });
+
+		const timestamp = Date.now();
+		const prefix = `Renderer-${reason || 'OOM'}-${timestamp}`;
+		const breadcrumbsPath = join(dumpDir, `${prefix}-breadcrumbs.json`);
+
+		await fs.writeFile(breadcrumbsPath, JSON.stringify(breadcrumbs, null, 2));
+		this.logService.warn(`[OOM Monitor] Breadcrumbs saved to ${breadcrumbsPath}`);
+	}
+
 	// #endregion
 
 	//#region Toast Notifications
