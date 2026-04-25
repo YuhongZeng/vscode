@@ -971,29 +971,58 @@ export class ExtHostSCM implements ExtHostSCMShape {
 					const sourceControl = this._sourceControls.get(arg.sourceControlHandle);
 
 					if (!sourceControl) {
-						return arg;
+						return {
+							resourceUri: arg.resourceUri,
+							command: arg.command,
+							decorations: arg.decorations,
+							contextValue: arg.contextValue
+						};
 					}
 
 					const group = sourceControl.getResourceGroup(arg.groupHandle);
 
 					if (!group) {
-						return arg;
+						return {
+							resourceUri: arg.resourceUri,
+							command: arg.command,
+							decorations: arg.decorations,
+							contextValue: arg.contextValue
+						};
 					}
 
-					return group.getResourceState(arg.handle);
+					return group.getResourceState(arg.handle) || {
+						resourceUri: arg.resourceUri,
+						command: arg.command,
+						decorations: arg.decorations,
+						contextValue: arg.contextValue
+					};
 				} else if (arg && arg.$mid === MarshalledId.ScmResourceGroup) {
 					const sourceControl = this._sourceControls.get(arg.sourceControlHandle);
 
 					if (!sourceControl) {
-						return arg;
+						return {
+							id: arg.id,
+							label: arg.label,
+							hideWhenEmpty: arg.features?.hideWhenEmpty,
+							contextValue: arg.features?.contextValue
+						};
 					}
 
-					return sourceControl.getResourceGroup(arg.groupHandle);
+					return sourceControl.getResourceGroup(arg.groupHandle) || {
+						id: arg.id,
+						label: arg.label,
+						hideWhenEmpty: arg.features?.hideWhenEmpty,
+						contextValue: arg.features?.contextValue
+					};
 				} else if (arg && arg.$mid === MarshalledId.ScmProvider) {
 					const sourceControl = this._sourceControls.get(arg.handle);
 
 					if (!sourceControl) {
-						return arg;
+						return {
+							id: arg.id,
+							label: arg.label,
+							rootUri: arg.rootUri
+						};
 					}
 
 					return sourceControl;

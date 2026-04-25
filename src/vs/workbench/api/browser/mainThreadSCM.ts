@@ -120,7 +120,10 @@ class MainThreadSCMResourceGroup implements ISCMResourceGroup {
 		return {
 			$mid: MarshalledId.ScmResourceGroup,
 			sourceControlHandle: this.sourceControlHandle,
-			groupHandle: this.handle
+			groupHandle: this.handle,
+			id: this.id,
+			label: this.label,
+			features: this.features
 		};
 	}
 
@@ -167,7 +170,11 @@ class MainThreadSCMResource implements ISCMResource {
 			$mid: MarshalledId.ScmResource,
 			sourceControlHandle: this.sourceControlHandle,
 			groupHandle: this.groupHandle,
-			handle: this.handle
+			handle: this.handle,
+			resourceUri: this.sourceUri,
+			decorations: this.decorations,
+			contextValue: this.contextValue,
+			command: this.command
 		};
 	}
 }
@@ -590,7 +597,10 @@ class MainThreadSCMProvider implements ISCMProvider {
 	toJSON() {
 		return {
 			$mid: MarshalledId.ScmProvider,
-			handle: this.handle
+			handle: this.handle,
+			id: this.id,
+			label: this.label,
+			rootUri: this.rootUri
 		};
 	}
 
