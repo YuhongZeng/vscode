@@ -178,6 +178,13 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		}
 	}
 
+	async $show(handle: number, title?: string): Promise<void> {
+		const session = this._sessions.get(handle);
+		if (session) {
+			await session.show(false, title);
+		}
+	}
+
 	private _findEntry(uri: UriComponents, entries: readonly IModifiedFileEntry[]): IModifiedFileEntry | undefined {
 		return entries.find(e => {
 			const u = uri as (UriComponents & { fsPath?: string; external?: string });

@@ -436,7 +436,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		return applicableEntries.length;
 	}
 
-	async show(previousChanges?: boolean): Promise<void> {
+	async show(previousChanges?: boolean, title?: string): Promise<void> {
 		this._assertNotDisposed();
 		if (this._editorPane) {
 			if (this._editorPane.isVisible()) {
@@ -447,8 +447,8 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 			}
 		}
 		const input = MultiDiffEditorInput.fromResourceMultiDiffEditorInput({
-			multiDiffSource: getMultiDiffSourceUri(this, previousChanges),
-			label: localize('multiDiffEditorInput.name', "Suggested Edits")
+			multiDiffSource: getMultiDiffSourceUri(this, previousChanges, title),
+			label: title ?? localize('multiDiffEditorInput.name', "Suggested Edits")
 		}, this._instantiationService);
 
 		this._editorPane = await this._editorGroupsService.activeGroup.openEditor(input, { pinned: true, activation: EditorActivation.ACTIVATE }) as MultiDiffEditor | undefined;

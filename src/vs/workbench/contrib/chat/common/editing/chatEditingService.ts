@@ -96,7 +96,7 @@ export interface IChatEditingSession extends IDisposable {
 	/** Requests disabled by undo/redo in the session */
 	readonly requestDisablement: IObservable<IChatRequestDisablement[]>;
 
-	show(previousChanges?: boolean): Promise<void>;
+	show(previousChanges?: boolean, title?: string): Promise<void>;
 	accept(...uris: URI[]): Promise<void>;
 	reject(...uris: URI[]): Promise<void>;
 	getEntry(uri: URI): IModifiedFileEntry | undefined;
@@ -455,17 +455,37 @@ export function isChatEditingActionContext(thing: unknown): thing is IChatEditin
 	return typeof thing === 'object' && !!thing && hasKey(thing, { sessionResource: true });
 }
 
-export function getMultiDiffSourceUri(session: IChatEditingSession, showPreviousChanges?: boolean): URI {
+export function getMultiDiffSourceUri(session: IChatEditingSession, showPreviousChanges?: boolean, title?: string): URI {
+	const queryObj: { previous?: boolean; title?: string } = {};
+	if (showPreviousChanges) {
+		queryObj.previous = true;
+	}
+	if (title) {
+		queryObj.title = title;
+	}
 	return URI.from({
 		scheme: CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME,
 		authority: encodeHex(VSBuffer.fromString(session.chatSessionResource.toString())),
-		query: showPreviousChanges ? 'previous' : undefined,
+		query: Object.keys(queryObj).length > 0 ? JSON.stringify(queryObj) : undefined,
 	});
 }
 
-export function parseChatMultiDiffUri(uri: URI): { chatSessionResource: URI; showPreviousChanges: boolean } {
+export function parseChatMultiDiffUri(uri: URI): { chatSessionResource: URI; showPreviousChanges: boolean; title?: string } {
 	const chatSessionResource = URI.parse(decodeHex(uri.authority).toString());
-	const showPreviousChanges = uri.query === 'previous';
+	let showPreviousChanges = false;
+	let title: string | undefined;
 
-	return { chatSessionResource, showPreviousChanges };
+	if (uri.query === 'previous') { // backward compatibility
+		showPreviousChanges = true;
+	} else if (uri.query) {
+		try {
+			const queryObj = JSON.parse(uri.query);
+			showPreviousChanges = !!queryObj.previous;
+			title = queryObj.title;
+		} catch (e) {
+			// Ignore
+		}
+	}
+
+	return { chatSessionResource, showPreviousChanges, title };
 }

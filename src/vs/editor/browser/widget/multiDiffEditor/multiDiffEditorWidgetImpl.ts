@@ -89,7 +89,11 @@ export class MultiDiffEditorWidgetImpl extends Disposable {
 			useShadows: false,
 		}, this._scrollable));
 		this._elements = h('div.monaco-component.multiDiffEditor', {}, [
-			h('div', {}, [this._scrollableElement.getDomNode()]),
+			h('div.global-header@globalHeader', {}, [
+				h('span.title@globalHeaderTitle', {}),
+				h('span.stats@globalHeaderStats', {})
+			]),
+			h('div.multiDiffEditorScrollable', { style: { flex: '1', minHeight: '0', position: 'relative' } }, [this._scrollableElement.getDomNode()]),
 			h('div.placeholder@placeholder', {}, [h('div')]),
 		]);
 		this._sizeObserver = this._register(new ObservableElementSizeObserver(this._element, undefined));
@@ -187,6 +191,21 @@ export class MultiDiffEditorWidgetImpl extends Disposable {
 			const message = placeholderMessage.read(reader);
 			this._elements.placeholder.innerText = message ?? '';
 			this._elements.placeholder.classList.toggle('visible', !!message);
+		}));
+
+		this._register(autorun((reader) => {
+			const viewModel = this._viewModel.read(reader);
+			const globalHeader = viewModel?.globalHeader?.read(reader);
+			if (globalHeader) {
+				this._elements.globalHeader.style.display = '';
+				this._elements.globalHeaderTitle.innerText = globalHeader.title;
+				const fileCountStr = localize('filesChanged', "{0} files changed", globalHeader.fileCount);
+				const linesAddedStr = `+${globalHeader.linesAdded}`;
+				const linesRemovedStr = `-${globalHeader.linesRemoved}`;
+				this._elements.globalHeaderStats.innerText = `${fileCountStr}, ${linesAddedStr}, ${linesRemovedStr}`;
+			} else {
+				this._elements.globalHeader.style.display = 'none';
+			}
 		}));
 
 		this._scrollableElements.content.style.position = 'relative';

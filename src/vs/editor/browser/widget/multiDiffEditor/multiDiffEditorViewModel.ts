@@ -55,11 +55,14 @@ export class MultiDiffEditorViewModel extends Disposable {
 		return this.model.contextKeys;
 	}
 
+	public readonly globalHeader?: IObservable<{ title: string; fileCount: number; linesAdded: number; linesRemoved: number } | undefined>;
+
 	constructor(
 		public readonly model: IMultiDiffEditorModel,
 		private readonly _instantiationService: IInstantiationService,
 	) {
 		super();
+		this.globalHeader = model.globalHeader;
 		this._documents = observableFromValueWithChangeEvent(this.model, this.model.documents);
 		this._documentsArr = derived(this, reader => {
 			const result = this._documents.read(reader);

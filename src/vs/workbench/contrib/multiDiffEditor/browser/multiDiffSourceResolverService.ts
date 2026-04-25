@@ -10,6 +10,8 @@ import { URI } from '../../../../base/common/uri.js';
 import { ContextKeyValue } from '../../../../platform/contextkey/common/contextkey.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 
+import { IObservable } from '../../../../base/common/observable.js';
+
 export const IMultiDiffSourceResolverService = createDecorator<IMultiDiffSourceResolverService>('multiDiffSourceResolverService');
 
 export interface IMultiDiffSourceResolverService {
@@ -29,6 +31,7 @@ export interface IMultiDiffSourceResolver {
 export interface IResolvedMultiDiffSource {
 	readonly resources: IValueWithChangeEvent<readonly MultiDiffEditorItem[]>;
 	readonly contextKeys?: Record<string, ContextKeyValue>;
+	readonly globalHeader?: IObservable<{ title: string; fileCount: number; linesAdded: number; linesRemoved: number } | undefined>;
 }
 
 export class MultiDiffEditorItem {
@@ -37,7 +40,9 @@ export class MultiDiffEditorItem {
 		readonly modifiedUri: URI | undefined,
 		readonly goToFileUri: URI | undefined,
 		readonly goToFileEditorTitle?: string | undefined,
-		readonly contextKeys?: Record<string, ContextKeyValue>
+		readonly contextKeys?: Record<string, ContextKeyValue>,
+		readonly linesAdded?: number,
+		readonly linesRemoved?: number
 	) {
 		if (!originalUri && !modifiedUri) {
 			throw new BugIndicatingError('Invalid arguments');

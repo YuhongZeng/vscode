@@ -211,6 +211,8 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 				original: original?.object.textEditorModel,
 				modified: modified?.object.textEditorModel,
 				contextKeys: r.contextKeys,
+				linesAdded: r.linesAdded,
+				linesRemoved: r.linesRemoved,
 				get options() {
 					return {
 						...getReadonlyConfiguration(modified?.object.isReadonly() ?? true),
@@ -243,6 +245,7 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 			dispose: () => a.dispose(),
 			documents: new ValueWithChangeEventFromObservable(documents),
 			contextKeys: source.source?.contextKeys,
+			globalHeader: source.source?.globalHeader,
 		};
 		return result;
 	}

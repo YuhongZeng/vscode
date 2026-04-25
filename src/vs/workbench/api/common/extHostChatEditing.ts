@@ -49,6 +49,10 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 		await this._proxy.$reject(this._handle, uris);
 	}
 
+	async show(title?: string): Promise<void> {
+		await this._proxy.$show(this._handle, title);
+	}
+
 	_init(id: string) {
 		this._id = id;
 	}

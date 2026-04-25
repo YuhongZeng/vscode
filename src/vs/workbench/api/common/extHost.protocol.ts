@@ -3400,6 +3400,7 @@ export interface MainThreadChatEditingShape extends IDisposable {
 	$applyEdits(handle: number, edits: IWorkspaceEditDto, description?: string): Promise<void>;
 	$accept(handle: number, uris?: UriComponents[]): Promise<void>;
 	$reject(handle: number, uris?: UriComponents[]): Promise<void>;
+	$show(handle: number, title?: string): Promise<void>;
 	$disposeEditingSession(handle: number): Promise<void>;
 }
 

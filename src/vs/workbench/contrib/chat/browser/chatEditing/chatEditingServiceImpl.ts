@@ -453,7 +453,7 @@ export class ChatEditingMultiDiffSourceResolver implements IMultiDiffSourceResol
 			return this._editingSessionsObs.read(r).find(candidate => isEqual(candidate.chatSessionResource, parsed.chatSessionResource));
 		});
 
-		return this._instantiationService.createInstance(ChatEditingMultiDiffSource, thisSession, parsed.showPreviousChanges);
+		return this._instantiationService.createInstance(ChatEditingMultiDiffSource, thisSession, parsed.showPreviousChanges, parsed.title);
 	}
 }
 
@@ -477,6 +477,8 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 						{
 							[chatEditingResourceContextKey.key]: entry.entryId,
 						},
+						entry.linesAdded?.read(reader),
+						entry.linesRemoved?.read(reader)
 					);
 				}
 			}
@@ -490,6 +492,8 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 					[chatEditingResourceContextKey.key]: entry.entryId,
 					// [inChatEditingSessionContextKey.key]: true
 				},
+				entry.linesAdded?.read(reader),
+				entry.linesRemoved?.read(reader)
 			);
 		});
 	});
@@ -499,9 +503,29 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 		[inChatEditingSessionContextKey.key]: true
 	};
 
+	readonly globalHeader = derived(this, (reader) => {
+		if (!this._title) {
+			return undefined;
+		}
+		const resources = this._resources.read(reader);
+		let linesAdded = 0;
+		let linesRemoved = 0;
+		for (const resource of resources) {
+			linesAdded += resource.linesAdded ?? 0;
+			linesRemoved += resource.linesRemoved ?? 0;
+		}
+		return {
+			title: this._title,
+			fileCount: resources.length,
+			linesAdded,
+			linesRemoved
+		};
+	});
+
 	constructor(
 		private readonly _currentSession: IObservable<IChatEditingSession | undefined>,
-		private readonly _showPreviousChanges: boolean
+		private readonly _showPreviousChanges: boolean,
+		private readonly _title?: string
 	) { }
 }
 

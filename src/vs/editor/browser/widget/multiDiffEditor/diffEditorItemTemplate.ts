@@ -102,6 +102,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 						h('div.status.deleted@status', ['R']),
 						// eslint-disable-next-line local/code-no-any-casts, @typescript-eslint/no-explicit-any
 						h('div.title.original.show-file-icons@secondaryPath', [] as any),
+						h('div.stats@stats', []),
 					]),
 					h('div.actions@actions'),
 				]),
@@ -258,6 +259,34 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			this._elements.status.classList.toggle('deleted', isDeleted);
 			this._elements.status.classList.toggle('added', isAdded);
 			this._elements.status.innerText = flag;
+
+			const linesAdded = data.viewModel.documentDiffItem.linesAdded ?? 0;
+			const linesRemoved = data.viewModel.documentDiffItem.linesRemoved ?? 0;
+			if (linesAdded > 0 || linesRemoved > 0) {
+				this._elements.stats.style.display = 'flex';
+				this._elements.stats.style.gap = '4px';
+				this._elements.stats.style.marginLeft = '8px';
+				this._elements.stats.style.alignItems = 'center';
+				this._elements.stats.style.fontSize = '12px';
+
+				this._elements.stats.replaceChildren();
+				if (linesAdded > 0) {
+					const addedSpan = document.createElement('span');
+					addedSpan.innerText = `+${linesAdded}`;
+					addedSpan.style.color = 'var(--vscode-gitDecoration-addedResourceForeground)';
+					this._elements.stats.appendChild(addedSpan);
+				}
+
+				if (linesRemoved > 0) {
+					const removedSpan = document.createElement('span');
+					removedSpan.innerText = `-${linesRemoved}`;
+					removedSpan.style.color = 'var(--vscode-gitDecoration-deletedResourceForeground)';
+					this._elements.stats.appendChild(removedSpan);
+				}
+			} else {
+				this._elements.stats.style.display = 'none';
+				this._elements.stats.replaceChildren();
+			}
 
 			this._resourceLabel2?.setUri(isRenamed ? data.viewModel.originalUri : undefined, { strikethrough: true });
 

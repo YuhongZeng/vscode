@@ -52,6 +52,12 @@ declare module 'vscode' {
 			 * Reject all changes in the session, or specific files.
 			 */
 			reject(uris?: Uri[]): Thenable<void>;
+
+			/**
+			 * Show the multi-file diff editor for the changes in this session.
+			 * @param title The title of the session to display in the editor.
+			 */
+			show(title?: string): Thenable<void>;
 		}
 
 		export interface ChatEditingSessionOptions {
