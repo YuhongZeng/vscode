@@ -9,6 +9,7 @@ import { ExtHostChatEditingShape, ExtHostContext, IWorkspaceEditDto, MainContext
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../contrib/chat/common/chatService/chatService.js';
+import { ITextFileService } from '../../services/textfile/common/textfiles.js';
 
 import { reviveWorkspaceEditDto } from './mainThreadBulkEdits.js';
 import { ChatModel } from '../../contrib/chat/common/model/chatModel.js';
@@ -17,6 +18,7 @@ import { IUriIdentityService } from '../../../platform/uriIdentity/common/uriIde
 import { ChatRequestTextPart } from '../../contrib/chat/common/requestParser/chatParserTypes.js';
 import { OffsetRange } from '../../../editor/common/core/ranges/offsetRange.js';
 import { Range } from '../../../editor/common/core/range.js';
+import { IWorkspaceFileEdit } from '../../../editor/common/languages.js';
 import { URI, UriComponents } from '../../../base/common/uri.js';
 
 @extHostNamedCustomer(MainContext.MainThreadChatEditing)
@@ -30,7 +32,8 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		extHostContext: IExtHostContext,
 		@IChatEditingService private readonly _chatEditingService: IChatEditingService,
 		@IChatService private readonly _chatService: IChatService,
-		@IUriIdentityService private readonly _uriIdentityService: IUriIdentityService
+		@IUriIdentityService private readonly _uriIdentityService: IUriIdentityService,
+		@ITextFileService private readonly _textFileService: ITextFileService
 	) {
 		super();
 		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostChatEditing);
@@ -89,62 +92,85 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		}
 	}
 
-	async $applyEdits(handle: number, editDto: IWorkspaceEditDto, description: string = 'Extension Edit'): Promise<void> {
-		const session = this._sessions.get(handle);
-		if (!session) {
-			throw new Error('Session not found');
-		}
+	async $applyEdits(handle: number, editDto: IWorkspaceEditDto, description: string = 'Extension Edit'): Promise<boolean | string> {
+		try {
+			const session = this._sessions.get(handle);
+			if (!session) {
+				return 'Session not found';
+			}
 
-		const edits = reviveWorkspaceEditDto(editDto, this._uriIdentityService);
-		if (!edits) {
-			throw new Error('Failed to revive workspace edit');
-		}
+			const edits = reviveWorkspaceEditDto(editDto, this._uriIdentityService);
+			if (!edits) {
+				return 'Failed to revive workspace edit';
+			}
 
-		const chatModel = this._chatService.getSession(session.chatSessionResource) as ChatModel;
+			const chatModel = this._chatService.getSession(session.chatSessionResource) as ChatModel;
 
-		if (!chatModel) {
-			throw new Error('Chat model not found');
-		}
+			if (!chatModel) {
+				return 'Chat model not found';
+			}
 
-		// Create a request to house these edits
-		const parts = [new ChatRequestTextPart(new OffsetRange(0, description.length), new Range(1, 1, 1, 1), description)];
-		const request = chatModel.addRequest({ parts, text: description }, { variables: [] }, 0);
+			// Create a request to house these edits
+			const parts = [new ChatRequestTextPart(new OffsetRange(0, description.length), new Range(1, 1, 1, 1), description)];
+			const request = chatModel.addRequest({ parts, text: description }, { variables: [] }, 0);
 
-		// Ensure response exists
-		const response = request.response;
-		if (!response) {
-			throw new Error('Response not found');
-		}
+			// Ensure response exists
+			const response = request.response;
+			if (!response) {
+				return 'Response not found';
+			}
 
-		// Apply edits
-		// We iterate over the WorkspaceEdit and stream them into the session
-		for (const edit of edits.edits) {
-			// Check if it is a text edit
-			// eslint-disable-next-line local/code-no-in-operator
-			if ('textEdit' in edit) {
-				const uri = edit.resource;
-				const textEdits = edit.textEdit;
-				const stream = session.startStreamingEdits(uri, response, undefined);
-				stream.pushText([textEdits], true);
-				stream.complete();
-			} else {
-				// Handle file operations (create/delete/rename)
-				// We need to filter out custom edits as they are not supported here
-				// And ensure type safety for IWorkspaceFileEdit
-				// eslint-disable-next-line local/code-no-any-casts, @typescript-eslint/no-explicit-any
-				const workspaceEdit = edit as any;
+			// Apply edits
+			// We iterate over the WorkspaceEdit and stream them into the session
+			for (const edit of edits.edits) {
+				// Check if it is a text edit
 				// eslint-disable-next-line local/code-no-in-operator
-				if (!('textEdit' in workspaceEdit)) {
-					session.applyWorkspaceEdit({
-						kind: 'workspaceEdit',
-						edits: [workspaceEdit]
-					}, response, 'undoStop'); // Provide a dummy undoStop ID
+				if ('textEdit' in edit) {
+					const uri = edit.resource;
+					const textEdits = edit.textEdit;
+					const stream = session.startStreamingEdits(uri, response, undefined);
+					stream.pushText([textEdits], true);
+					stream.complete();
+				} else {
+					// Handle file operations (create/delete/rename)
+					// We need to filter out custom edits as they are not supported here
+					// And ensure type safety for IWorkspaceFileEdit
+					const workspaceFileEdit = edit as IWorkspaceFileEdit;
+					// eslint-disable-next-line local/code-no-in-operator
+					if (!('textEdit' in workspaceFileEdit)) {
+						session.applyWorkspaceEdit({
+							kind: 'workspaceEdit',
+							edits: [workspaceFileEdit]
+						}, response, 'undoStop'); // Provide a dummy undoStop ID
+					}
 				}
 			}
-		}
 
-		// Mark response as complete
-		response.complete();
+			// Mark response as complete
+			response.complete();
+
+			// Collect all modified URIs
+			const modifiedUris = new Map<string, URI>();
+			for (const edit of edits.edits) {
+				// eslint-disable-next-line local/code-no-in-operator
+				if ('textEdit' in edit) {
+					modifiedUris.set(edit.resource.toString(), edit.resource);
+				} else {
+					const workspaceFileEdit = edit as IWorkspaceFileEdit;
+					if (workspaceFileEdit.newResource) {
+						modifiedUris.set(workspaceFileEdit.newResource.toString(), workspaceFileEdit.newResource);
+					}
+				}
+			}
+
+			await Promise.all(Array.from(modifiedUris.values()).map(uri => this._textFileService.save(uri)));
+			return true;
+		} catch (err) {
+			if (err instanceof Error) {
+				return err.message;
+			}
+			return 'Unknown error occurred while applying edits';
+		}
 	}
 
 	async $accept(handle: number, uris?: UriComponents[]): Promise<void> {

@@ -566,6 +566,11 @@ export interface IResourceMultiDiffEditorInput extends IBaseUntypedEditorInput {
 	 * Whether the editor should be serialized and stored for subsequent sessions.
 	 */
 	readonly isTransient?: boolean;
+
+	/**
+	 * Whether the multi diff editor should be read-only.
+	 */
+	readonly isReadonly?: boolean;
 }
 
 export interface IMultiDiffEditorResource extends IResourceDiffEditorInput {

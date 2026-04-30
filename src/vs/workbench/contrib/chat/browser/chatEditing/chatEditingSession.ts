@@ -438,17 +438,33 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 
 	async show(previousChanges?: boolean, title?: string): Promise<void> {
 		this._assertNotDisposed();
-		if (this._editorPane) {
-			if (this._editorPane.isVisible()) {
-				return;
-			} else if (this._editorPane.input) {
-				await this._editorGroupsService.activeGroup.openEditor(this._editorPane.input, { pinned: true, activation: EditorActivation.ACTIVATE });
-				return;
+
+		const multiDiffSourceUri = getMultiDiffSourceUri(this, previousChanges, title);
+
+		if (this._editorPane?.input) {
+			const input = this._editorPane.input as MultiDiffEditorInput;
+			if (!input.isDisposed() && input.multiDiffSource?.toString() === multiDiffSourceUri.toString()) {
+				if (this._editorPane.isVisible()) {
+					return;
+				} else {
+					await this._editorGroupsService.activeGroup.openEditor(input, { pinned: true, activation: EditorActivation.ACTIVATE });
+					return;
+				}
 			}
 		}
+
+		for (const group of this._editorGroupsService.groups) {
+			for (const editor of group.editors) {
+				if (editor instanceof MultiDiffEditorInput) {
+					await group.closeEditor(editor);
+				}
+			}
+		}
+
 		const input = MultiDiffEditorInput.fromResourceMultiDiffEditorInput({
-			multiDiffSource: getMultiDiffSourceUri(this, previousChanges, title),
-			label: title ?? localize('multiDiffEditorInput.name', "Suggested Edits")
+			multiDiffSource: multiDiffSourceUri,
+			label: title ?? localize('multiDiffEditorInput.name', "Diffview"),
+			isReadonly: true
 		}, this._instantiationService);
 
 		this._editorPane = await this._editorGroupsService.activeGroup.openEditor(input, { pinned: true, activation: EditorActivation.ACTIVATE }) as MultiDiffEditor | undefined;

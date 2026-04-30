@@ -49,7 +49,8 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 					resource.goToFileResource,
 				);
 			}),
-			input.isTransient ?? false
+			input.isTransient ?? false,
+			input.isReadonly ?? false
 		);
 	}
 
@@ -63,6 +64,7 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 				resource.modifiedUri ? URI.parse(resource.modifiedUri) : undefined,
 				resource.goToFileUri ? URI.parse(resource.goToFileUri) : undefined,
 			)),
+			false,
 			false
 		);
 	}
@@ -73,6 +75,10 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 
 	override get capabilities(): EditorInputCapabilities { return EditorInputCapabilities.Readonly; }
 	override get typeId(): string { return MultiDiffEditorInput.ID; }
+
+	override isReadonly(): boolean | IMarkdownString {
+		return this.isReadonlyView;
+	}
 
 	private _name: string;
 	override getName(): string { return this._name; }
@@ -85,6 +91,7 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 		public readonly label: string | undefined,
 		public readonly initialResources: readonly MultiDiffEditorItem[] | undefined,
 		public readonly isTransient: boolean = false,
+		public readonly isReadonlyView: boolean = false,
 		@ITextModelService private readonly _textModelService: ITextModelService,
 		@ITextResourceConfigurationService private readonly _textResourceConfigurationService: ITextResourceConfigurationService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
@@ -206,6 +213,7 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 			}
 
 			const uri = (r.modifiedUri ?? r.originalUri)!;
+			const isReadonlyInput = this.isReadonlyView;
 			const result: IDocumentDiffItemWithMultiDiffEditorItem = {
 				multiDiffEditorItem: r,
 				original: original?.object.textEditorModel,
@@ -214,8 +222,9 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 				linesAdded: r.linesAdded,
 				linesRemoved: r.linesRemoved,
 				get options() {
+					const isReadonly = isReadonlyInput || source.source?.contextKeys?.['inChatEditingSession'] ? true : (modified?.object.isReadonly() ?? true);
 					return {
-						...getReadonlyConfiguration(modified?.object.isReadonly() ?? true),
+						...getReadonlyConfiguration(isReadonly),
 						...computeOptions(textResourceConfigurationService.getValue(uri)),
 					} satisfies IDiffEditorOptions;
 				},

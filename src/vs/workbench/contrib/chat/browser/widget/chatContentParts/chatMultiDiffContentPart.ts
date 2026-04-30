@@ -123,6 +123,7 @@ export class ChatMultiDiffContentPart extends Disposable implements IChatContent
 					resource.modifiedUri,
 					resource.goToFileUri
 				)),
+				false,
 				false
 			);
 			const sideBySide = e.altKey;

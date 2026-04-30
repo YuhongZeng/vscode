@@ -17,6 +17,7 @@ import { IDiffEditorOptions } from '../../../common/config/editorOptions.js';
 import { OffsetRange } from '../../../common/core/ranges/offsetRange.js';
 import { observableCodeEditor } from '../../observableCodeEditor.js';
 import { DiffEditorWidget } from '../diffEditor/diffEditorWidget.js';
+import { DiffEditorViewModel } from '../diffEditor/diffEditorViewModel.js';
 import { DocumentDiffItemViewModel } from './multiDiffEditorViewModel.js';
 import { IObjectData, IPooledObject } from './objectPool.js';
 import { ActionRunnerWithContext } from './utils.js';
@@ -97,11 +98,9 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 				h('div.header-content', [
 					h('div.collapse-button@collapseButton'),
 					h('div.file-path', [
-						// eslint-disable-next-line local/code-no-any-casts, @typescript-eslint/no-explicit-any
-						h('div.title.modified.show-file-icons@primaryPath', [] as any),
+						h('div.title.modified.show-file-icons@primaryPath', []),
 						h('div.status.deleted@status', ['R']),
-						// eslint-disable-next-line local/code-no-any-casts, @typescript-eslint/no-explicit-any
-						h('div.title.original.show-file-icons@secondaryPath', [] as any),
+						h('div.title.original.show-file-icons@secondaryPath', []),
 						h('div.stats@stats', []),
 					]),
 					h('div.actions@actions'),
@@ -144,12 +143,12 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			this._elements.editor.style.display = this._collapsed.read(reader) ? 'none' : 'block';
 		}));
 
-		this._register(this.editor.getModifiedEditor().onDidLayoutChange(e => {
+		this._register(this.editor.getModifiedEditor().onDidLayoutChange(() => {
 			const width = this.editor.getModifiedEditor().getLayoutInfo().contentWidth;
 			this._modifiedWidth.set(width, undefined);
 		}));
 
-		this._register(this.editor.getOriginalEditor().onDidLayoutChange(e => {
+		this._register(this.editor.getOriginalEditor().onDidLayoutChange(() => {
 			const width = this.editor.getOriginalEditor().getLayoutInfo().contentWidth;
 			this._originalWidth.set(width, undefined);
 		}));
@@ -260,37 +259,51 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			this._elements.status.classList.toggle('added', isAdded);
 			this._elements.status.innerText = flag;
 
-			const linesAdded = data.viewModel.documentDiffItem.linesAdded ?? 0;
-			const linesRemoved = data.viewModel.documentDiffItem.linesRemoved ?? 0;
-			if (linesAdded > 0 || linesRemoved > 0) {
-				this._elements.stats.style.display = 'flex';
-				this._elements.stats.style.gap = '4px';
-				this._elements.stats.style.marginLeft = '8px';
-				this._elements.stats.style.alignItems = 'center';
-				this._elements.stats.style.fontSize = '12px';
+			this._dataStore.clear();
 
-				this._elements.stats.replaceChildren();
-				if (linesAdded > 0) {
-					const addedSpan = document.createElement('span');
-					addedSpan.innerText = `+${linesAdded}`;
-					addedSpan.style.color = 'var(--vscode-gitDecoration-addedResourceForeground)';
-					this._elements.stats.appendChild(addedSpan);
+			this._dataStore.add(autorun(reader => {
+				let linesAdded = 0;
+				let linesRemoved = 0;
+				const diff = (data.viewModel.diffEditorViewModel as DiffEditorViewModel).diff.read(reader);
+				if (diff) {
+					for (const mapping of diff.mappings) {
+						linesAdded += mapping.lineRangeMapping.modified.length;
+						linesRemoved += mapping.lineRangeMapping.original.length;
+					}
+				} else {
+					linesAdded = data.viewModel.documentDiffItem.linesAdded ?? 0;
+					linesRemoved = data.viewModel.documentDiffItem.linesRemoved ?? 0;
 				}
 
-				if (linesRemoved > 0) {
-					const removedSpan = document.createElement('span');
-					removedSpan.innerText = `-${linesRemoved}`;
-					removedSpan.style.color = 'var(--vscode-gitDecoration-deletedResourceForeground)';
-					this._elements.stats.appendChild(removedSpan);
+				if (linesAdded > 0 || linesRemoved > 0) {
+					this._elements.stats.style.display = 'flex';
+					this._elements.stats.style.gap = '4px';
+					this._elements.stats.style.marginLeft = '8px';
+					this._elements.stats.style.alignItems = 'center';
+					this._elements.stats.style.fontSize = '12px';
+
+					this._elements.stats.replaceChildren();
+					if (linesAdded > 0) {
+						const addedSpan = document.createElement('span');
+						addedSpan.innerText = `+${linesAdded}`;
+						addedSpan.style.color = 'var(--vscode-chat-linesAddedForeground)';
+						this._elements.stats.appendChild(addedSpan);
+					}
+
+					if (linesRemoved > 0) {
+						const removedSpan = document.createElement('span');
+						removedSpan.innerText = `-${linesRemoved}`;
+						removedSpan.style.color = 'var(--vscode-chat-linesRemovedForeground)';
+						this._elements.stats.appendChild(removedSpan);
+					}
+				} else {
+					this._elements.stats.style.display = 'none';
+					this._elements.stats.replaceChildren();
 				}
-			} else {
-				this._elements.stats.style.display = 'none';
-				this._elements.stats.replaceChildren();
-			}
+			}));
 
 			this._resourceLabel2?.setUri(isRenamed ? data.viewModel.originalUri : undefined, { strikethrough: true });
 
-			this._dataStore.clear();
 			this._viewModel.set(data.viewModel, tx);
 			this.editor.setDiffModel(data.viewModel.diffEditorViewModelRef, tx);
 			this.editor.updateOptions(updateOptions(value.options ?? {}));
@@ -330,7 +343,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 		const delta = Math.max(0, Math.min(viewPort.start - verticalRange.start, maxDelta));
 		this._elements.header.style.transform = `translateY(${delta}px)`;
 
-		globalTransaction(tx => {
+		globalTransaction(() => {
 			this.editor.layout({
 				width: width - 2 * 8 - 2 * 1,
 				height: verticalRange.length - this._outerEditorHeight,

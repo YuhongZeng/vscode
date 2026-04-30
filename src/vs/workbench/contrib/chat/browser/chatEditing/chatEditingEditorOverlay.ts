@@ -416,10 +416,14 @@ class ChatEditingOverlayController {
 					? entry.getEditorIntegration(editorPane).currentIndex.read(r)
 					: 0);
 
-				const entryIndex = derived(r => entry
-					? session.entries.read(r).indexOf(entry)
-					: 0
-				);
+				const entryIndex = derived(r => {
+					if (!entry) {
+						return 0;
+					}
+					const entries = session.entries.read(r);
+					const modifiedEntries = entries.filter(e => e.state.read(r) === ModifiedFileEntryState.Modified);
+					return modifiedEntries.indexOf(entry);
+				});
 
 				widget.show(session, entry, { entryIndex, changeIndex });
 				show();

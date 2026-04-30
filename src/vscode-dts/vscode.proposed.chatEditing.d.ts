@@ -24,6 +24,20 @@ declare module 'vscode' {
 			readonly removed: number;
 		}
 
+		/**
+		 * Represents the result of applying edits to a chat editing session.
+		 */
+		export interface ChatEditingSessionApplyEditsResult {
+			/**
+			 * Whether the edits were successfully applied.
+			 */
+			readonly success: boolean;
+			/**
+			 * The error message if the edits failed to apply.
+			 */
+			readonly errorMessage?: string;
+		}
+
 		export interface ChatEditingSession extends Disposable {
 			readonly id: string;
 			/**
@@ -37,10 +51,15 @@ declare module 'vscode' {
 			readonly onDidChange: Event<void>;
 
 			/**
+			 * Fired when the session is disposed.
+			 */
+			readonly onDidDispose: Event<void>;
+
+			/**
 			 * Apply edits to the session.
 			 * This will trigger the diff view in the editor.
 			 */
-			applyEdits(edit: WorkspaceEdit, description?: string): Thenable<void>;
+			applyEdits(edit: WorkspaceEdit, description?: string): Thenable<ChatEditingSessionApplyEditsResult>;
 
 			/**
 			/**

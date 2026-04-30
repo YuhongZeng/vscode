@@ -3397,7 +3397,7 @@ export interface MainThreadChatSessionsShape extends IDisposable {
 
 export interface MainThreadChatEditingShape extends IDisposable {
 	$createEditingSession(handle: number, chatSessionId?: string): Promise<string>;
-	$applyEdits(handle: number, edits: IWorkspaceEditDto, description?: string): Promise<void>;
+	$applyEdits(handle: number, edits: IWorkspaceEditDto, description?: string): Promise<boolean | string>;
 	$accept(handle: number, uris?: UriComponents[]): Promise<void>;
 	$reject(handle: number, uris?: UriComponents[]): Promise<void>;
 	$show(handle: number, title?: string): Promise<void>;

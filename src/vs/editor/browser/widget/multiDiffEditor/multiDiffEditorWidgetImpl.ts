@@ -199,10 +199,24 @@ export class MultiDiffEditorWidgetImpl extends Disposable {
 			if (globalHeader) {
 				this._elements.globalHeader.style.display = '';
 				this._elements.globalHeaderTitle.innerText = globalHeader.title;
-				const fileCountStr = localize('filesChanged', "{0} files changed", globalHeader.fileCount);
-				const linesAddedStr = `+${globalHeader.linesAdded}`;
-				const linesRemovedStr = `-${globalHeader.linesRemoved}`;
-				this._elements.globalHeaderStats.innerText = `${fileCountStr}, ${linesAddedStr}, ${linesRemovedStr}`;
+
+				this._elements.globalHeaderStats.replaceChildren();
+
+				const fileCountSpan = document.createElement('span');
+				fileCountSpan.className = 'file-count';
+				fileCountSpan.innerText = localize('filesChanged', "{0} files changed", globalHeader.fileCount) + ' | ';
+
+				const addedSpan = document.createElement('span');
+				addedSpan.innerText = `+${globalHeader.linesAdded} `;
+				addedSpan.style.color = 'var(--vscode-chat-linesAddedForeground)';
+
+				const removedSpan = document.createElement('span');
+				removedSpan.innerText = `-${globalHeader.linesRemoved}`;
+				removedSpan.style.color = 'var(--vscode-chat-linesRemovedForeground)';
+
+				this._elements.globalHeaderStats.appendChild(fileCountSpan);
+				this._elements.globalHeaderStats.appendChild(addedSpan);
+				this._elements.globalHeaderStats.appendChild(removedSpan);
 			} else {
 				this._elements.globalHeader.style.display = 'none';
 			}
