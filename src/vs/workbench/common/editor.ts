@@ -771,6 +771,10 @@ export interface ISaveOptions {
 	 * A hint as to which file systems should be available for saving.
 	 */
 	readonly availableFileSystems?: string[];
+	/**
+	 * If set, will bubble up the save error to the caller instead of handling it.
+	 */
+	readonly ignoreErrorHandler?: boolean;
 }
 
 export interface IRevertOptions {

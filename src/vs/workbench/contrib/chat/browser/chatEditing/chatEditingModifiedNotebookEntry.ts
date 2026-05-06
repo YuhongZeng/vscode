@@ -427,6 +427,7 @@ export class ChatEditingModifiedNotebookEntry extends AbstractChatEditingModifie
 					await this.modifiedResourceRef.object.save({
 						reason: SaveReason.EXPLICIT,
 						force: true,
+						ignoreErrorHandler: true
 					});
 				} catch {
 					// ignored
@@ -451,7 +452,7 @@ export class ChatEditingModifiedNotebookEntry extends AbstractChatEditingModifie
 					// save the file after discarding so that the dirty indicator goes away
 					// and so that an intermediate saved state gets reverted
 					try {
-						await this.modifiedResourceRef.object.save({ reason: SaveReason.EXPLICIT, skipSaveParticipants: true });
+						await this.modifiedResourceRef.object.save({ reason: SaveReason.EXPLICIT, skipSaveParticipants: true, ignoreErrorHandler: true });
 					} catch {
 						// ignored
 					}
@@ -1092,7 +1093,8 @@ export class ChatEditingModifiedNotebookEntry extends AbstractChatEditingModifie
 			try {
 				await this.modifiedResourceRef.object.save({
 					reason: SaveReason.EXPLICIT,
-					skipSaveParticipants: true
+					skipSaveParticipants: true,
+					ignoreErrorHandler: true
 				});
 			} catch {
 				// ignored
