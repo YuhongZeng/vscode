@@ -77,8 +77,24 @@
 		width: auto;
 	}
 
-	.active {
-		--vscode-multiDiffEditor-border: var(--vscode-focusBorder);
+	.active .header {
+		border-color: var(--vscode-focusBorder);
+	}
+
+	.active:not(.collapsed) .header .header-content {
+		border-bottom-color: var(--vscode-focusBorder);
+	}
+
+	.active.collapsed .header {
+		border-color: var(--vscode-focusBorder);
+	}
+
+	.active.collapsed .header .header-content {
+		border-bottom: none;
+	}
+
+	.active .editorParent {
+		border-color: var(--vscode-focusBorder);
 	}
 
 	.multiDiffEntry {
@@ -86,7 +102,8 @@
 		flex-direction: column;
 		flex: 1;
 		overflow: hidden;
-
+		padding: 8px 12px;
+		box-sizing: border-box;
 
 		.collapse-button {
 			margin: 0 5px;
@@ -97,25 +114,37 @@
 			}
 		}
 
+		&.collapsed .header {
+			border-radius: 8px;
+			border-bottom: 1px solid var(--vscode-multiDiffEditor-border);
+		}
+
+		&:not(.collapsed) .header {
+			border-radius: 8px 8px 0 0;
+			border-bottom: none;
+		}
+
+		&:not(.collapsed) .header .header-content {
+			border-bottom: 1px solid var(--vscode-multiDiffEditor-border);
+		}
+
+		&.collapsed .header .header-content {
+			border-bottom: none;
+		}
+
 		.header {
 			z-index: 1000;
-			background: var(--vscode-editor-background);
-
-			&:not(.collapsed) .header-content {
-				border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
-			}
+			background: var(--vscode-multiDiffEditor-headerBackground);
+			border: 1px solid var(--vscode-multiDiffEditor-border);
+			overflow: hidden;
 
 			.header-content {
-				margin: 8px 0px 0px 0px;
-				padding: 4px 5px;
-
-				border-top: 1px solid var(--vscode-multiDiffEditor-border);
+				padding: 6px 12px;
 
 				display: flex;
 				align-items: center;
 
 				color: var(--vscode-foreground);
-				background: var(--vscode-multiDiffEditor-headerBackground);
 
 				&.shadow {
 					box-shadow: var(--vscode-scrollbar-shadow) 0px 6px 6px -6px;
@@ -173,8 +202,16 @@
 			display: flex;
 			flex-direction: column;
 
+			border-left: 1px solid var(--vscode-multiDiffEditor-border);
+			border-right: 1px solid var(--vscode-multiDiffEditor-border);
 			border-bottom: 1px solid var(--vscode-multiDiffEditor-border);
+			border-radius: 0 0 8px 8px;
 			overflow: hidden;
+			background: var(--vscode-editor-background);
+		}
+
+		&.collapsed .editorParent {
+			display: none;
 		}
 
 		.editorContainer {

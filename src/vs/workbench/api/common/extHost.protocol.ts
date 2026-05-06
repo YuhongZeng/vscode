@@ -3395,9 +3395,15 @@ export interface MainThreadChatSessionsShape extends IDisposable {
 	$handleProgressComplete(handle: number, sessionResource: UriComponents, requestId: string): void;
 }
 
+export interface IApplyEditsResultDto {
+	success: boolean;
+	errorMessage?: string;
+	failedEdits?: { uri: UriComponents; reason: string }[];
+}
+
 export interface MainThreadChatEditingShape extends IDisposable {
 	$createEditingSession(handle: number, chatSessionId?: string): Promise<string>;
-	$applyEdits(handle: number, edits: IWorkspaceEditDto, description?: string): Promise<boolean | string>;
+	$applyEdits(handle: number, edits: IWorkspaceEditDto, description?: string): Promise<IApplyEditsResultDto>;
 	$accept(handle: number, uris?: UriComponents[]): Promise<void>;
 	$reject(handle: number, uris?: UriComponents[]): Promise<void>;
 	$show(handle: number, title?: string): Promise<void>;

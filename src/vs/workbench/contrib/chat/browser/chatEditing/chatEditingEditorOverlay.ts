@@ -182,8 +182,8 @@ export class ChatEditorOverlayWidget extends Disposable {
 
 			// Use local change count instead of global
 			let changeCount = 0;
-			if (entryIndex !== undefined && entryIndex >= 0 && entryIndex < entries.length) {
-				changeCount = entries[entryIndex].changesCount.read(r);
+			if (entry) {
+				changeCount = entry.changesCount.read(r);
 			}
 
 			const modifiedEntriesCount = entries.filter(e => e.state.read(r) === ModifiedFileEntryState.Modified).length;

@@ -450,7 +450,11 @@ export class ChatEditingModifiedNotebookEntry extends AbstractChatEditingModifie
 				if (this._allEditsAreFromUs && Array.from(this.cellEntryMap.values()).every(entry => entry.allEditsAreFromUs)) {
 					// save the file after discarding so that the dirty indicator goes away
 					// and so that an intermediate saved state gets reverted
-					await this.modifiedResourceRef.object.save({ reason: SaveReason.EXPLICIT, skipSaveParticipants: true });
+					try {
+						await this.modifiedResourceRef.object.save({ reason: SaveReason.EXPLICIT, skipSaveParticipants: true });
+					} catch {
+						// ignored
+					}
 				}
 			});
 			this.initializeModelsFromDiff();
@@ -1085,10 +1089,14 @@ export class ChatEditingModifiedNotebookEntry extends AbstractChatEditingModifie
 
 		// Save the notebook if dirty
 		if (this.notebookResolver.isDirty(this.modifiedModel.uri)) {
-			await this.modifiedResourceRef.object.save({
-				reason: SaveReason.EXPLICIT,
-				skipSaveParticipants: true
-			});
+			try {
+				await this.modifiedResourceRef.object.save({
+					reason: SaveReason.EXPLICIT,
+					skipSaveParticipants: true
+				});
+			} catch {
+				// ignored
+			}
 		}
 	}
 

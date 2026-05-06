@@ -249,10 +249,14 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 			}
 		});
 		if (isLastEdits && this._shouldAutoSave()) {
-			await this._textFileService.save(this.modifiedModel.uri, {
-				reason: SaveReason.AUTO,
-				skipSaveParticipants: true,
-			});
+			try {
+				await this._textFileService.save(this.modifiedModel.uri, {
+					reason: SaveReason.AUTO,
+					skipSaveParticipants: true,
+				});
+			} catch {
+				// ignored
+			}
 		}
 	}
 
@@ -291,7 +295,11 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 			if (this._textModelChangeService.allEditsAreFromUs && isTextFileEditorModel(this._docFileEditorModel) && this._shouldAutoSave()) {
 				// save the file after discarding so that the dirty indicator goes away
 				// and so that an intermediate saved state gets reverted
-				await this._docFileEditorModel.save({ reason: SaveReason.EXPLICIT, skipSaveParticipants: true });
+				try {
+					await this._docFileEditorModel.save({ reason: SaveReason.EXPLICIT, skipSaveParticipants: true, ignoreErrorHandler: true });
+				} catch {
+					// ignored
+				}
 			}
 			this._multiDiffEntryDelegate.collapse(undefined);
 		}

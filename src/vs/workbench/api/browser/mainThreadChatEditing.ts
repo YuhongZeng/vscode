@@ -4,12 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable, DisposableMap, IDisposable } from '../../../base/common/lifecycle.js';
-import { autorun } from '../../../base/common/observable.js';
-import { ExtHostChatEditingShape, ExtHostContext, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
+import { autorun, waitForState } from '../../../base/common/observable.js';
+import { ExtHostChatEditingShape, ExtHostContext, IApplyEditsResultDto, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
-import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
+import { ChatEditingSessionState, IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../contrib/chat/common/chatService/chatService.js';
 import { ITextFileService } from '../../services/textfile/common/textfiles.js';
+import { IFilesConfigurationService } from '../../services/filesConfiguration/common/filesConfigurationService.js';
 
 import { reviveWorkspaceEditDto } from './mainThreadBulkEdits.js';
 import { ChatModel } from '../../contrib/chat/common/model/chatModel.js';
@@ -33,7 +34,8 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		@IChatEditingService private readonly _chatEditingService: IChatEditingService,
 		@IChatService private readonly _chatService: IChatService,
 		@IUriIdentityService private readonly _uriIdentityService: IUriIdentityService,
-		@ITextFileService private readonly _textFileService: ITextFileService
+		@ITextFileService private readonly _textFileService: ITextFileService,
+		@IFilesConfigurationService private readonly _filesConfigurationService: IFilesConfigurationService
 	) {
 		super();
 		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostChatEditing);
@@ -92,22 +94,45 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		}
 	}
 
-	async $applyEdits(handle: number, editDto: IWorkspaceEditDto, description: string = 'Extension Edit'): Promise<boolean | string> {
+	async $applyEdits(handle: number, editDto: IWorkspaceEditDto, description: string = 'Extension Edit'): Promise<IApplyEditsResultDto> {
 		try {
 			const session = this._sessions.get(handle);
 			if (!session) {
-				return 'Session not found';
+				return { success: false, errorMessage: 'Session not found' };
 			}
 
 			const edits = reviveWorkspaceEditDto(editDto, this._uriIdentityService);
 			if (!edits) {
-				return 'Failed to revive workspace edit';
+				return { success: false, errorMessage: 'Failed to revive workspace edit' };
+			}
+
+			// Pre-flight check: ensure none of the files are read-only
+			const failedEdits: { uri: UriComponents; reason: string }[] = [];
+			for (const edit of edits.edits) {
+				// eslint-disable-next-line local/code-no-in-operator
+				if ('textEdit' in edit) {
+					if (this._filesConfigurationService.isReadonly(edit.resource)) {
+						failedEdits.push({ uri: edit.resource, reason: `Error: Unable to write file '${edit.resource.toString()}' (File is read-only)` });
+					}
+				} else {
+					const workspaceFileEdit = edit as IWorkspaceFileEdit;
+					if (workspaceFileEdit.newResource && this._filesConfigurationService.isReadonly(workspaceFileEdit.newResource)) {
+						failedEdits.push({ uri: workspaceFileEdit.newResource, reason: `Error: Unable to write file '${workspaceFileEdit.newResource.toString()}' (File is read-only)` });
+					}
+					if (workspaceFileEdit.oldResource && this._filesConfigurationService.isReadonly(workspaceFileEdit.oldResource)) {
+						failedEdits.push({ uri: workspaceFileEdit.oldResource, reason: `Error: Unable to write file '${workspaceFileEdit.oldResource.toString()}' (File is read-only)` });
+					}
+				}
+			}
+
+			if (failedEdits.length > 0) {
+				return { success: false, errorMessage: 'One or more files are read-only', failedEdits };
 			}
 
 			const chatModel = this._chatService.getSession(session.chatSessionResource) as ChatModel;
 
 			if (!chatModel) {
-				return 'Chat model not found';
+				return { success: false, errorMessage: 'Chat model not found' };
 			}
 
 			// Create a request to house these edits
@@ -117,7 +142,7 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 			// Ensure response exists
 			const response = request.response;
 			if (!response) {
-				return 'Response not found';
+				return { success: false, errorMessage: 'Response not found' };
 			}
 
 			// Apply edits
@@ -149,6 +174,9 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 			// Mark response as complete
 			response.complete();
 
+			// Wait for all edits to be fully applied by the streaming sequencer
+			await waitForState(session.state, state => state === ChatEditingSessionState.Idle);
+
 			// Collect all modified URIs
 			const modifiedUris = new Map<string, URI>();
 			for (const edit of edits.edits) {
@@ -163,13 +191,38 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				}
 			}
 
-			await Promise.all(Array.from(modifiedUris.values()).map(uri => this._textFileService.save(uri)));
-			return true;
+			const saveResults = await Promise.all(Array.from(modifiedUris.values()).map(async uri => {
+				try {
+					const result = await this._textFileService.save(uri, { ignoreErrorHandler: true });
+					return { uri, success: !!result };
+				} catch (error) {
+					return { uri, success: false, reason: error instanceof Error ? error.toString() : String(error) };
+				}
+			}));
+
+			const failedSaves = saveResults.filter(r => !r.success);
+			if (failedSaves.length > 0) {
+				const saveFailedEdits: { uri: UriComponents; reason: string }[] = failedSaves.map(f => ({
+					uri: f.uri,
+					reason: f.reason || 'Failed to save to disk'
+				}));
+
+				// Revert the dirty state for files that failed to save
+				const urisToReject = failedSaves.map(f => f.uri);
+				await session.reject(...urisToReject);
+
+				return {
+					success: false,
+					errorMessage: 'Failed to save one or more files to disk. The files might be read-only or the save operation was cancelled.',
+					failedEdits: saveFailedEdits
+				};
+			}
+			return { success: true };
 		} catch (err) {
 			if (err instanceof Error) {
-				return err.message;
+				return { success: false, errorMessage: err.message };
 			}
-			return 'Unknown error occurred while applying edits';
+			return { success: false, errorMessage: 'Unknown error occurred while applying edits' };
 		}
 	}
 

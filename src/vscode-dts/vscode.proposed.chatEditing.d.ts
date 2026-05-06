@@ -36,6 +36,10 @@ declare module 'vscode' {
 			 * The error message if the edits failed to apply.
 			 */
 			readonly errorMessage?: string;
+			/**
+			 * A list of files that failed to apply or save.
+			 */
+			readonly failedEdits?: { readonly uri: Uri; readonly reason: string }[];
 		}
 
 		export interface ChatEditingSession extends Disposable {

@@ -39,10 +39,17 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 	async applyEdits(edit: vscode.WorkspaceEdit, description?: string): Promise<vscode.chat.ChatEditingSessionApplyEditsResult> {
 		const dto = typeConvert.WorkspaceEdit.from(edit);
 		const result = await this._proxy.$applyEdits(this._handle, dto, description);
-		if (typeof result === 'string') {
-			return { success: false, errorMessage: result };
-		}
-		return { success: result };
+
+		const failedEdits = result.failedEdits?.map(f => ({
+			uri: URI.revive(f.uri),
+			reason: f.reason
+		}));
+
+		return {
+			success: result.success,
+			errorMessage: result.errorMessage,
+			failedEdits
+		};
 	}
 
 	async accept(uris?: vscode.Uri[]): Promise<void> {

@@ -125,7 +125,8 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			? this._register(this._workbenchUIElementFactory.createResourceLabel(this._elements.secondaryPath))
 			: undefined;
 		this._dataStore = this._register(new DisposableStore());
-		this._headerHeight = 40;
+		this._headerHeight = 36;
+		this._outerEditorHeight = this._headerHeight + 16;
 		this._lastScrollTop = -1;
 		this._isSettingScrollTop = false;
 
@@ -179,7 +180,6 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 		}));
 
 		this._container.appendChild(this._elements.root);
-		this._outerEditorHeight = this._headerHeight;
 
 		this._contextKeyService = this._register(_parentContextKeyService.createScoped(this._elements.actions));
 		const instantiationService = this._register(this._instantiationService.createChild(new ServiceCollection([IContextKeyService, this._contextKeyService])));
@@ -339,13 +339,13 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 		this._elements.root.style.position = 'absolute';
 
 		// For sticky scroll
-		const maxDelta = verticalRange.length - this._headerHeight;
-		const delta = Math.max(0, Math.min(viewPort.start - verticalRange.start, maxDelta));
+		const maxDelta = verticalRange.length - this._outerEditorHeight;
+		const delta = Math.max(0, Math.min(viewPort.start - verticalRange.start - 8, maxDelta));
 		this._elements.header.style.transform = `translateY(${delta}px)`;
 
 		globalTransaction(() => {
 			this.editor.layout({
-				width: width - 2 * 8 - 2 * 1,
+				width: width - 24 - 2,
 				height: verticalRange.length - this._outerEditorHeight,
 			});
 		});
@@ -358,7 +358,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 		}
 
 		this._elements.header.classList.toggle('shadow', delta > 0 || editorScroll > 0);
-		this._elements.header.classList.toggle('collapsed', delta === maxDelta);
+		this._elements.root.classList.toggle('collapsed', delta === maxDelta);
 	}
 
 	public hide(): void {
