@@ -1521,6 +1521,7 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 		// namespace: chat
 		const chat: typeof vscode.chat = {
 			ChatEditingFileState: extHostTypes.ChatEditingFileState,
+			ChatEditingSessionUserAction: extHostTypes.ChatEditingSessionUserAction,
 			startEditingSession(options?: vscode.chat.ChatEditingSessionOptions) {
 				checkProposedApiEnabled(extension, 'chatParticipantPrivate');
 				return extHostChatEditing.startEditingSession(options);

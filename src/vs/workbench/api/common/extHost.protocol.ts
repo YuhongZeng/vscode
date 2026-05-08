@@ -3414,6 +3414,7 @@ export interface ExtHostChatEditingShape {
 	$accept(handle: number): Promise<void>;
 	$reject(handle: number): Promise<void>;
 	$onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; kind: number; added: number; removed: number }[]): Promise<void>;
+	$onDidUserAction(handle: number, action: { type: number; uri: UriComponents; isFromApi?: boolean }): void;
 }
 
 export interface ExtHostChatSessionsShape {

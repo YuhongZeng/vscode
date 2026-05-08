@@ -3,11 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable, DisposableMap, IDisposable } from '../../../base/common/lifecycle.js';
+import { combinedDisposable, Disposable, DisposableMap, IDisposable } from '../../../base/common/lifecycle.js';
 import { autorun } from '../../../base/common/observable.js';
+import { RunOnceScheduler } from '../../../base/common/async.js';
+import { Iterable } from '../../../base/common/iterator.js';
 import { ExtHostChatEditingShape, ExtHostContext, IApplyEditsResultDto, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
-import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
+import { IChatEditingService, IChatEditingSession, IModifiedFileEntry } from '../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../contrib/chat/common/chatService/chatService.js';
 import { ITextFileService } from '../../services/textfile/common/textfiles.js';
 import { IFilesConfigurationService } from '../../services/filesConfiguration/common/filesConfigurationService.js';
@@ -39,6 +41,32 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 	) {
 		super();
 		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostChatEditing);
+
+		this._register(this._chatService.onDidPerformUserAction(e => {
+			if (e.action.kind === 'chatEditingSessionAction' || e.action.kind === 'chatEditingHunkAction') {
+				const session = Iterable.find(this._sessions.values(), s => s.chatSessionResource.toString() === e.sessionResource.toString());
+				if (session) {
+					// find handle
+					let handle: number | undefined;
+					for (const [h, s] of this._sessions) {
+						if (s === session) {
+							handle = h;
+							break;
+						}
+					}
+					if (handle !== undefined) {
+						let type: number;
+						if (e.action.kind === 'chatEditingSessionAction') {
+							type = e.action.outcome === 'accepted' ? 1 /* FileAccepted */ : 2 /* FileRejected */;
+							this._proxy.$onDidUserAction(handle, { type, uri: e.action.uri, isFromApi: e.action.isFromApi });
+						} else {
+							type = e.action.outcome === 'accepted' ? 3 /* HunkAccepted */ : 4 /* HunkRejected */;
+							this._proxy.$onDidUserAction(handle, { type, uri: e.action.uri, isFromApi: false });
+						}
+					}
+				}
+			}
+		}));
 	}
 
 	async $createEditingSession(handle: number, chatSessionId?: string): Promise<string> {
@@ -66,21 +94,32 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		const session = this._chatEditingService.createEditingSession(chatModel);
 		this._sessions.set(handle, session);
 
-		const disposable = autorun(reader => {
-			const entries = session.entries.read(reader);
+		const updateScheduler = new RunOnceScheduler(() => {
+			const entries = session.entries.get();
 			const files = entries
-				.filter(entry => entry.state.read(reader) === ModifiedFileEntryState.Modified)
 				.map(entry => ({
 					uri: entry.modifiedURI,
-					state: entry.state.read(reader),
+					state: entry.state.get(),
 					kind: entry.kind,
-					added: entry.linesAdded?.read(reader) ?? 0,
-					removed: entry.linesRemoved?.read(reader) ?? 0
+					added: entry.linesAdded?.get() ?? 0,
+					removed: entry.linesRemoved?.get() ?? 0
 				}));
 			this._proxy.$onDidUpdateSession(handle, files);
+		}, 50);
+
+		const disposable = autorun(reader => {
+			const entries = session.entries.read(reader);
+			for (const entry of entries) {
+				entry.state.read(reader);
+				entry.linesAdded?.read(reader);
+				entry.linesRemoved?.read(reader);
+			}
+			if (!updateScheduler.isScheduled()) {
+				updateScheduler.schedule();
+			}
 		});
 
-		this._sessionDisposables.set(handle, disposable);
+		this._sessionDisposables.set(handle, combinedDisposable(disposable, updateScheduler));
 
 		return session.chatSessionResource.toString();
 	}
@@ -218,7 +257,12 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 
 				// Revert the dirty state for files that failed to save
 				const urisToReject = failedSaves.map(f => f.uri);
-				await session.reject(...urisToReject);
+				session.isAcceptingFromApi = true;
+				try {
+					await session.reject(...urisToReject);
+				} finally {
+					session.isAcceptingFromApi = false;
+				}
 
 				return {
 					success: false,
@@ -247,7 +291,12 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				// Fallback to revive if not found in session (though unlikely to work if not in session)
 				return URI.revive(u);
 			}) ?? entries.map(e => e.modifiedURI);
-			await session.accept(...targetUris);
+			session.isAcceptingFromApi = true;
+			try {
+				await session.accept(...targetUris);
+			} finally {
+				session.isAcceptingFromApi = false;
+			}
 		}
 	}
 
@@ -262,7 +311,12 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				}
 				return URI.revive(u);
 			}) ?? entries.map(e => e.modifiedURI);
-			await session.reject(...targetUris);
+			session.isAcceptingFromApi = true;
+			try {
+				await session.reject(...targetUris);
+			} finally {
+				session.isAcceptingFromApi = false;
+			}
 		}
 	}
 

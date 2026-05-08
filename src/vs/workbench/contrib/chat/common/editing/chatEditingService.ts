@@ -97,6 +97,13 @@ export interface IChatEditingSession extends IDisposable {
 	readonly requestDisablement: IObservable<IChatRequestDisablement[]>;
 
 	show(previousChanges?: boolean, title?: string): Promise<void>;
+
+	/**
+	 * Allows the system to identify if the current accept/reject operation was triggered by an API call
+	 * to prevent telemetry from logging it as a user action.
+	 */
+	isAcceptingFromApi?: boolean;
+
 	accept(...uris: URI[]): Promise<void>;
 	reject(...uris: URI[]): Promise<void>;
 	getEntry(uri: URI): IModifiedFileEntry | undefined;

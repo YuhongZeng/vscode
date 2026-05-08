@@ -1031,6 +1031,7 @@ export interface IChatEditingSessionAction {
 	uri: URI;
 	hasRemainingEdits: boolean;
 	outcome: 'accepted' | 'rejected' | 'userModified';
+	isFromApi?: boolean;
 }
 
 export interface IChatEditingHunkAction {

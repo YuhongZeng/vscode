@@ -98,7 +98,11 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 
 	readonly abstract originalURI: URI;
 
-	protected readonly _userEditScheduler = this._register(new RunOnceScheduler(() => this._notifySessionAction('userModified'), 1000));
+	protected readonly _userEditScheduler = this._register(new RunOnceScheduler(() => {
+		if (this._stateObs.get() === ModifiedFileEntryState.Modified) {
+			this._notifySessionAction('userModified');
+		}
+	}, 1000));
 
 	constructor(
 		readonly modifiedURI: URI,
@@ -226,7 +230,7 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 	}
 
 	/** Accepts and returns a function used to transition the state. This MUST be called by the consumer. */
-	async acceptDeferred(): Promise<((tx: ITransaction) => void) | undefined> {
+	async acceptDeferred(options?: { isFromApi?: boolean }): Promise<((tx: ITransaction) => void) | undefined> {
 		if (this._stateObs.get() !== ModifiedFileEntryState.Modified) {
 			// already accepted or rejected
 			return;
@@ -235,9 +239,10 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 		await this._doAccept();
 
 		return (tx: ITransaction) => {
+			this._userEditScheduler.cancel();
 			this._stateObs.set(ModifiedFileEntryState.Accepted, tx);
 			this._autoAcceptCtrl.set(undefined, tx);
-			this._notifySessionAction('accepted');
+			this._notifySessionAction('accepted', options?.isFromApi);
 		};
 	}
 
@@ -251,16 +256,17 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 	}
 
 	/** Rejects and returns a function used to transition the state. This MUST be called by the consumer. */
-	async rejectDeferred(): Promise<((tx: ITransaction) => void) | undefined> {
+	async rejectDeferred(options?: { isFromApi?: boolean }): Promise<((tx: ITransaction) => void) | undefined> {
 		if (this._stateObs.get() !== ModifiedFileEntryState.Modified) {
 			// already accepted or rejected
 			return undefined;
 		}
 
-		this._notifySessionAction('rejected');
+		this._notifySessionAction('rejected', options?.isFromApi);
 		await this._doReject();
 
 		return (tx: ITransaction) => {
+			this._userEditScheduler.cancel();
 			this._stateObs.set(ModifiedFileEntryState.Rejected, tx);
 			this._autoAcceptCtrl.set(undefined, tx);
 		};
@@ -268,8 +274,8 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 
 	protected abstract _doReject(): Promise<void>;
 
-	protected _notifySessionAction(outcome: 'accepted' | 'rejected' | 'userModified') {
-		this._notifyAction({ kind: 'chatEditingSessionAction', uri: this.modifiedURI, hasRemainingEdits: false, outcome });
+	protected _notifySessionAction(outcome: 'accepted' | 'rejected' | 'userModified', isFromApi?: boolean) {
+		this._notifyAction({ kind: 'chatEditingSessionAction', uri: this.modifiedURI, hasRemainingEdits: false, outcome, isFromApi });
 	}
 
 	protected _notifyAction(action: ChatUserAction) {

@@ -3081,6 +3081,19 @@ export enum ChatEditingFileState {
 	Rejected = 2
 }
 
+export enum ChatEditingSessionUserAction {
+	FileAccepted = 1,
+	FileRejected = 2,
+	HunkAccepted = 3,
+	HunkRejected = 4
+}
+
+export interface ChatEditingSessionAction {
+	readonly type: ChatEditingSessionUserAction;
+	readonly uri: URI;
+	readonly isFromApi?: boolean;
+}
+
 export enum ChatEditingSessionActionOutcome {
 	Accepted = 1,
 	Rejected = 2,

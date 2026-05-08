@@ -395,11 +395,12 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		}
 	}
 
+	public isAcceptingFromApi?: boolean;
+
 	async accept(...uris: URI[]): Promise<void> {
 		if (await this._operateEntry('accept', uris)) {
 			this._accessibilitySignalService.playSignal(AccessibilitySignal.editsKept, { allowManyInParallel: true });
 		}
-
 	}
 
 	async reject(...uris: URI[]): Promise<void> {
@@ -423,7 +424,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		// Perform all I/O operations in parallel, each resolving to a state transition callback
 		const method = action === 'accept' ? 'acceptDeferred' : 'rejectDeferred';
 		const transitionCallbacks = await Promise.all(
-			applicableEntries.map(entry => entry[method]().catch(err => {
+			applicableEntries.map(entry => entry[method]({ isFromApi: this.isAcceptingFromApi }).catch(err => {
 				this._logService.error(`Error calling ${method} on entry ${entry.modifiedURI}`, err);
 			}))
 		);

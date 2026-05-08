@@ -42,6 +42,23 @@ declare module 'vscode' {
 			readonly failedEdits?: { readonly uri: Uri; readonly reason: string }[];
 		}
 
+		export enum ChatEditingSessionUserAction {
+			FileAccepted = 1,
+			FileRejected = 2,
+			HunkAccepted = 3,
+			HunkRejected = 4
+		}
+
+		export interface ChatEditingSessionAction {
+			readonly type: ChatEditingSessionUserAction;
+			readonly uri: Uri;
+			/**
+			 * Indicates whether this action was triggered by an extension calling the API (true)
+			 * or by a user interacting with the UI (false).
+			 */
+			readonly isFromApi?: boolean;
+		}
+
 		export interface ChatEditingSession extends Disposable {
 			readonly id: string;
 			/**
@@ -58,6 +75,12 @@ declare module 'vscode' {
 			 * Fired when the session is disposed.
 			 */
 			readonly onDidDispose: Event<void>;
+
+			/**
+			 * Fired when a user action (accept or reject) happens on a hunk or a file in the UI.
+			 */
+			// eslint-disable-next-line local/vscode-dts-event-naming
+			readonly onDidUserAction: Event<ChatEditingSessionAction>;
 
 			/**
 			 * Apply edits to the session.

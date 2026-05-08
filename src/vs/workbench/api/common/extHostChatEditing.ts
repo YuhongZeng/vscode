@@ -16,6 +16,9 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange = this._onDidChange.event;
 
+	private readonly _onDidUserAction = this._register(new Emitter<vscode.chat.ChatEditingSessionAction>());
+	readonly onDidUserAction = this._onDidUserAction.event;
+
 	private readonly _onDidDispose = this._register(new Emitter<void>());
 	readonly onDidDispose = this._onDidDispose.event;
 
@@ -79,6 +82,14 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 		this._onDidChange.fire();
 	}
 
+	fireUserAction(action: { type: number; uri: UriComponents; isFromApi?: boolean }) {
+		this._onDidUserAction.fire({
+			type: action.type,
+			uri: URI.revive(action.uri),
+			isFromApi: action.isFromApi
+		});
+	}
+
 	override dispose() {
 		this._proxy.$disposeEditingSession(this._handle);
 		this._onDidDispose.fire();
@@ -114,6 +125,10 @@ export class ExtHostChatEditing implements ExtHostChatEditingShape {
 
 	async $reject(handle: number): Promise<void> {
 		// Can be used to trigger local events if needed
+	}
+
+	$onDidUserAction(handle: number, action: { type: number; uri: UriComponents; isFromApi?: boolean }): void {
+		this._sessions.get(handle)?.fireUserAction(action);
 	}
 
 	async $onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; kind: number; added: number; removed: number }[]): Promise<void> {

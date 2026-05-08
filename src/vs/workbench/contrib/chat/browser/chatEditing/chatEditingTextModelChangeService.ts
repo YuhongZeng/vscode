@@ -314,7 +314,6 @@ export class ChatEditingTextModelChangeService extends Disposable {
 	 * Keeps the current modified document as the final contents.
 	 */
 	public keep() {
-		this.notifyHunkAction('accepted', { linesAdded: this.linesAdded, linesRemoved: this.linesRemoved, lineCount: this.lineChangeCount, hasRemainingEdits: false });
 		this.originalModel.setValue(this.modifiedModel.createSnapshot());
 		this._reset();
 	}
@@ -323,7 +322,6 @@ export class ChatEditingTextModelChangeService extends Disposable {
 	 * Undoes the current modified document as the final contents.
 	 */
 	public undo() {
-		this.notifyHunkAction('rejected', { linesAdded: this.linesAdded, linesRemoved: this.linesRemoved, lineCount: this.lineChangeCount, hasRemainingEdits: false });
 		this.modifiedModel.pushStackElement();
 		this._applyEdits([(EditOperation.replace(this.modifiedModel.getFullModelRange(), this.originalModel.getValue()))], EditSources.chatUndoEdits());
 		this.modifiedModel.pushStackElement();
@@ -433,7 +431,12 @@ export class ChatEditingTextModelChangeService extends Disposable {
 			const newText = this.originalModel.getValueInRange(edit.originalRange);
 			edits.push(EditOperation.replace(edit.modifiedRange, newText));
 		}
-		this.modifiedModel.pushEditOperations(null, edits, _ => null);
+		this._isEditFromUs = true;
+		try {
+			this.modifiedModel.pushEditOperations(null, edits, _ => null);
+		} finally {
+			this._isEditFromUs = false;
+		}
 		await this._updateDiffInfoSeq('rejected');
 		if (this._diffInfo.get().identical) {
 			this._didAcceptOrRejectAllHunks.fire(ModifiedFileEntryState.Rejected);
