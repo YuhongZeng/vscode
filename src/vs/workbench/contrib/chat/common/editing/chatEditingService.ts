@@ -60,7 +60,7 @@ export interface IStreamingEdits {
 	pushNotebookCellText(cell: URI, edits: TextEdit[], isLastEdits: boolean): void;
 	pushNotebook(edits: ICellEditOperation[], isLastEdits: boolean): void;
 	/** Marks edits as done, idempotent */
-	complete(): void;
+	complete(): void | Promise<void>;
 }
 
 export interface IModifiedEntryTelemetryInfo {

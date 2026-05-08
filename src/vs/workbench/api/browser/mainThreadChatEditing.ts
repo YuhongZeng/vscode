@@ -4,10 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable, DisposableMap, IDisposable } from '../../../base/common/lifecycle.js';
-import { autorun, waitForState } from '../../../base/common/observable.js';
+import { autorun } from '../../../base/common/observable.js';
 import { ExtHostChatEditingShape, ExtHostContext, IApplyEditsResultDto, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
-import { ChatEditingSessionState, IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
+import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../contrib/chat/common/chatService/chatService.js';
 import { ITextFileService } from '../../services/textfile/common/textfiles.js';
 import { IFilesConfigurationService } from '../../services/filesConfiguration/common/filesConfigurationService.js';
@@ -147,6 +147,7 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 
 			// Apply edits
 			// We iterate over the WorkspaceEdit and stream them into the session
+			const completePromises: Promise<void>[] = [];
 			for (const edit of edits.edits) {
 				// Check if it is a text edit
 				// eslint-disable-next-line local/code-no-in-operator
@@ -155,7 +156,10 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 					const textEdits = edit.textEdit;
 					const stream = session.startStreamingEdits(uri, response, undefined);
 					stream.pushText([textEdits], true);
-					stream.complete();
+					const p = stream.complete();
+					if (p) {
+						completePromises.push(p);
+					}
 				} else {
 					// Handle file operations (create/delete/rename)
 					// We need to filter out custom edits as they are not supported here
@@ -171,11 +175,13 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				}
 			}
 
+			// Wait for all streaming edits to be fully applied by the background sequencer
+			if (completePromises.length > 0) {
+				await Promise.all(completePromises);
+			}
+
 			// Mark response as complete
 			response.complete();
-
-			// Wait for all edits to be fully applied by the streaming sequencer
-			await waitForState(session.state, state => state === ChatEditingSessionState.Idle);
 
 			// Collect all modified URIs
 			const modifiedUris = new Map<string, URI>();
@@ -194,7 +200,10 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 			const saveResults = await Promise.all(Array.from(modifiedUris.values()).map(async uri => {
 				try {
 					const result = await this._textFileService.save(uri, { ignoreErrorHandler: true });
-					return { uri, success: !!result };
+					if (!result) {
+						return { uri, success: false, reason: 'Save operation was cancelled or failed implicitly' };
+					}
+					return { uri, success: true };
 				} catch (error) {
 					return { uri, success: false, reason: error instanceof Error ? error.toString() : String(error) };
 				}

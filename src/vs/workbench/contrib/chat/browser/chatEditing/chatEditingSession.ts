@@ -563,7 +563,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 				}
 
 				didComplete = true;
-				sequencer.queue(async () => {
+				return sequencer.queue(async () => {
 					if (!this.isDisposed) {
 						await this._acceptEdits(resource, [], true, responseModel);
 						await this._resolve(responseModel.requestId, inUndoStop, resource);

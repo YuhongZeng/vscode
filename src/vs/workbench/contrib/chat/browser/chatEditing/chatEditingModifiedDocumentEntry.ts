@@ -253,6 +253,7 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 				await this._textFileService.save(this.modifiedModel.uri, {
 					reason: SaveReason.AUTO,
 					skipSaveParticipants: true,
+					ignoreErrorHandler: true
 				});
 			} catch {
 				// ignored
@@ -337,10 +338,16 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 
 		// Save the current model state to disk if dirty
 		if (this._textFileService.isDirty(this.modifiedModel.uri)) {
-			await this._textFileService.save(this.modifiedModel.uri, {
-				reason: SaveReason.EXPLICIT,
-				skipSaveParticipants: true
-			});
+			try {
+				await this._textFileService.save(this.modifiedModel.uri, {
+					reason: SaveReason.EXPLICIT,
+					skipSaveParticipants: true,
+					ignoreErrorHandler: true
+				});
+			} catch {
+				// ignored
+			}
+
 		}
 	}
 
