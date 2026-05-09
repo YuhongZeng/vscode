@@ -58,10 +58,20 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 						let type: number;
 						if (e.action.kind === 'chatEditingSessionAction') {
 							type = e.action.outcome === 'accepted' ? 1 /* FileAccepted */ : 2 /* FileRejected */;
-							this._proxy.$onDidUserAction(handle, { type, uri: e.action.uri, isFromApi: e.action.isFromApi });
 						} else {
 							type = e.action.outcome === 'accepted' ? 3 /* HunkAccepted */ : 4 /* HunkRejected */;
-							this._proxy.$onDidUserAction(handle, { type, uri: e.action.uri, isFromApi: false });
+						}
+
+						const entry = session.getEntry(e.action.uri);
+						if (entry) {
+							const fileInfo = {
+								uri: entry.modifiedURI,
+								state: entry.state.get(),
+								kind: entry.kind,
+								added: entry.linesAdded?.get() ?? 0,
+								removed: entry.linesRemoved?.get() ?? 0
+							};
+							this._proxy.$onDidUserAction(handle, { type, uri: e.action.uri, isFromApi: e.action.kind === 'chatEditingSessionAction' ? e.action.isFromApi : false, file: fileInfo });
 						}
 					}
 				}

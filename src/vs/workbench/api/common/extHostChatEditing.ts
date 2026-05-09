@@ -82,11 +82,18 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 		this._onDidChange.fire();
 	}
 
-	fireUserAction(action: { type: number; uri: UriComponents; isFromApi?: boolean }) {
+	fireUserAction(action: { type: number; uri: UriComponents; isFromApi?: boolean; file: { uri: UriComponents; state: number; kind: number; added: number; removed: number } }) {
 		this._onDidUserAction.fire({
-			type: action.type,
+			type: action.type as vscode.chat.ChatEditingSessionUserAction,
 			uri: URI.revive(action.uri),
-			isFromApi: action.isFromApi
+			isFromApi: action.isFromApi,
+			file: {
+				uri: URI.revive(action.file.uri),
+				state: action.file.state,
+				isNew: action.file.kind === 0, // ChatEditKind.Created
+				added: action.file.added,
+				removed: action.file.removed
+			}
 		});
 	}
 
@@ -127,7 +134,7 @@ export class ExtHostChatEditing implements ExtHostChatEditingShape {
 		// Can be used to trigger local events if needed
 	}
 
-	$onDidUserAction(handle: number, action: { type: number; uri: UriComponents; isFromApi?: boolean }): void {
+	$onDidUserAction(handle: number, action: { type: number; uri: UriComponents; isFromApi?: boolean; file: { uri: UriComponents; state: number; kind: number; added: number; removed: number } }): void {
 		this._sessions.get(handle)?.fireUserAction(action);
 	}
 

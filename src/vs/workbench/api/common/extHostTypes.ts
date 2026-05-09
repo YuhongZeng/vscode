@@ -3092,6 +3092,7 @@ export interface ChatEditingSessionAction {
 	readonly type: ChatEditingSessionUserAction;
 	readonly uri: URI;
 	readonly isFromApi?: boolean;
+	readonly file: vscode.chat.ChatEditingFile;
 }
 
 export enum ChatEditingSessionActionOutcome {
