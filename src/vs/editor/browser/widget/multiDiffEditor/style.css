@@ -139,6 +139,7 @@
 		&.is-added .diff-range-empty {
 			background: transparent !important;
 			background-color: transparent !important;
+			border-left: none !important;
 		}
 
 		&.is-added .delete-sign {
