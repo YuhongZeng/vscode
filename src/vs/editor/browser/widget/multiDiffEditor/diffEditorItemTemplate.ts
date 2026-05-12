@@ -97,7 +97,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			h('div.header@header', [
 				h('div.header-content', [
 					h('div.collapse-button@collapseButton'),
-					h('div.file-path', [
+					h('div.file-path@filePath', [
 						h('div.title.modified.show-file-icons@primaryPath', []),
 						h('div.status.deleted@status', ['R']),
 						h('div.title.original.show-file-icons@secondaryPath', []),
@@ -111,6 +111,23 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 				h('div.editorContainer@editor'),
 			])
 		]) as Record<string, HTMLElement>;
+		this._elements.filePath.style.display = 'flex';
+		this._elements.filePath.style.alignItems = 'center';
+		this._elements.filePath.style.minWidth = '0';
+		this._elements.filePath.style.flex = '1';
+
+		this._elements.primaryPath.style.minWidth = '0';
+		this._elements.primaryPath.style.flexShrink = '1';
+		this._elements.primaryPath.style.overflow = 'hidden';
+		this._elements.primaryPath.style.whiteSpace = 'nowrap';
+		this._elements.primaryPath.style.textOverflow = 'ellipsis';
+
+		this._elements.secondaryPath.style.minWidth = '0';
+		this._elements.secondaryPath.style.flexShrink = '1';
+		this._elements.secondaryPath.style.overflow = 'hidden';
+		this._elements.secondaryPath.style.whiteSpace = 'nowrap';
+		this._elements.secondaryPath.style.textOverflow = 'ellipsis';
+
 		this.editor = this._register(this._instantiationService.createInstance(DiffEditorWidget, this._elements.editor, {
 			overflowWidgetsDomNode: this._overflowWidgetsDomNode,
 			fixedOverflowWidgets: true
@@ -281,6 +298,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 					this._elements.stats.style.marginLeft = '8px';
 					this._elements.stats.style.alignItems = 'center';
 					this._elements.stats.style.fontSize = '12px';
+					this._elements.stats.style.flexShrink = '0';
 
 					this._elements.stats.replaceChildren();
 					if (linesAdded > 0) {
