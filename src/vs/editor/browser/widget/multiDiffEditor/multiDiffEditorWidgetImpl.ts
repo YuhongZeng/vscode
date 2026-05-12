@@ -262,6 +262,10 @@ export class MultiDiffEditorWidgetImpl extends Disposable {
 				return;
 			}
 
+			if (viewModel.contextKeys?.['inChatEditingSession']) {
+				return;
+			}
+
 			// Only initialize when loading is complete
 			if (!viewModel.isLoading.read(reader)) {
 				const items = viewModel.items.read(reader);
