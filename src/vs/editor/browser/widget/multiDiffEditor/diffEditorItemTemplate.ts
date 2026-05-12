@@ -301,6 +301,12 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 					linesRemoved = data.viewModel.documentDiffItem.linesRemoved ?? 0;
 				}
 
+				if (isAdded) {
+					linesRemoved = 0;
+				} else if (isDeleted) {
+					linesAdded = 0;
+				}
+
 				if (linesAdded > 0 || linesRemoved > 0) {
 					this._elements.stats.style.display = 'flex';
 					this._elements.stats.style.gap = '4px';
