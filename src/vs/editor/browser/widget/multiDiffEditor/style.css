@@ -135,7 +135,8 @@
 		&.is-added .line-delete,
 		&.is-added .char-delete,
 		&.is-added .gutter-delete,
-		&.is-added .inline-deleted-margin-view-zone {
+		&.is-added .inline-deleted-margin-view-zone,
+		&.is-added .diff-range-empty {
 			background: transparent !important;
 			background-color: transparent !important;
 		}
