@@ -9,12 +9,11 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { groupBy } from '../../../../../base/common/collections.js';
 import { ErrorNoTelemetry } from '../../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Iterable } from '../../../../../base/common/iterator.js';
 import { Disposable, DisposableStore, dispose, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { LinkedList } from '../../../../../base/common/linkedList.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
 import { Schemas } from '../../../../../base/common/network.js';
-import { derived, IObservable, observableValueOpts, runOnChange, ValueWithChangeEventFromObservable } from '../../../../../base/common/observable.js';
+import { derived, IObservable, observableValue, observableValueOpts, runOnChange, ValueWithChangeEventFromObservable } from '../../../../../base/common/observable.js';
 import { isEqual } from '../../../../../base/common/resources.js';
 import { compare } from '../../../../../base/common/strings.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -37,7 +36,7 @@ import { ILifecycleService } from '../../../../services/lifecycle/common/lifecyc
 import { IMultiDiffSourceResolver, IMultiDiffSourceResolverService, IResolvedMultiDiffSource, MultiDiffEditorItem } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
 import { CellUri, ICellEditOperation } from '../../../notebook/common/notebookCommon.js';
 import { INotebookService } from '../../../notebook/common/notebookService.js';
-import { CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, chatEditingAgentSupportsReadonlyReferencesContextKey, chatEditingResourceContextKey, ChatEditingSessionState, IChatEditingService, IChatEditingSession, IModifiedFileEntry, inChatEditingSessionContextKey, IStreamingEdits, ModifiedFileEntryState, parseChatMultiDiffUri } from '../../common/editing/chatEditingService.js';
+import { CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, chatEditingAgentSupportsReadonlyReferencesContextKey, chatEditingResourceContextKey, ChatEditingSessionState, ChatEditKind, IChatEditingService, IChatEditingSession, IModifiedFileEntry, inChatEditingSessionContextKey, IStreamingEdits, ModifiedFileEntryState, parseChatMultiDiffUri } from '../../common/editing/chatEditingService.js';
 import { ChatModel, ICellTextEditOperation, IChatResponseModel, isCellTextEditOperationArray } from '../../common/model/chatModel.js';
 import { IChatService } from '../../common/chatService/chatService.js';
 import { ChatEditorInput } from '../widgetHosts/editor/chatEditorInput.js';
@@ -56,6 +55,15 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 		const result = Array.from(this._sessionsObs.read(r));
 		return result;
 	});
+
+	private readonly _editingEditorVisibility = observableValue<boolean>(this, false);
+	get editingEditorVisibility(): IObservable<boolean> {
+		return this._editingEditorVisibility;
+	}
+
+	setEditingEditorVisibility(visible: boolean): void {
+		this._editingEditorVisibility.set(visible, undefined);
+	}
 
 	constructor(
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
@@ -144,14 +152,6 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 	}
 
 	private _lookupEntry(uri: URI): AbstractChatEditingModifiedFileEntry | undefined {
-
-		for (const item of Iterable.concat(this.editingSessionsObs.get())) {
-			const candidate = item.getEntry(uri);
-			if (candidate instanceof AbstractChatEditingModifiedFileEntry) {
-				// make sure to ref-count this object
-				return candidate.acquire();
-			}
-		}
 		return undefined;
 	}
 
@@ -477,6 +477,8 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 						undefined,
 						{
 							[chatEditingResourceContextKey.key]: entry.entryId,
+							'chatEditing.isAdded': entry.kind === ChatEditKind.Created,
+							'chatEditing.isDeleted': entry.kind === ChatEditKind.Deleted,
 						},
 						entry.linesAdded?.read(reader),
 						entry.linesRemoved?.read(reader)
@@ -491,7 +493,8 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 				undefined,
 				{
 					[chatEditingResourceContextKey.key]: entry.entryId,
-					// [inChatEditingSessionContextKey.key]: true
+					'chatEditing.isAdded': entry.kind === ChatEditKind.Created,
+					'chatEditing.isDeleted': entry.kind === ChatEditKind.Deleted,
 				},
 				entry.linesAdded?.read(reader),
 				entry.linesRemoved?.read(reader)

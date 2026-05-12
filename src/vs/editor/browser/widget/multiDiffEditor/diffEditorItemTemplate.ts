@@ -261,7 +261,15 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			let isDeleted = false;
 			let isAdded = false;
 			let flag = '';
-			if (data.viewModel.modifiedUri && data.viewModel.originalUri && data.viewModel.modifiedUri.path !== data.viewModel.originalUri.path) {
+
+			const contextKeys = data.viewModel.documentDiffItem.contextKeys;
+			if (contextKeys?.['chatEditing.isAdded']) {
+				flag = 'A';
+				isAdded = true;
+			} else if (contextKeys?.['chatEditing.isDeleted']) {
+				flag = 'D';
+				isDeleted = true;
+			} else if (data.viewModel.modifiedUri && data.viewModel.originalUri && data.viewModel.modifiedUri.path !== data.viewModel.originalUri.path) {
 				flag = 'R';
 				isRenamed = true;
 			} else if (!data.viewModel.modifiedUri) {
@@ -275,6 +283,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			this._elements.status.classList.toggle('deleted', isDeleted);
 			this._elements.status.classList.toggle('added', isAdded);
 			this._elements.status.innerText = flag;
+			this._elements.root.classList.toggle('is-added', isAdded);
 
 			this._dataStore.clear();
 

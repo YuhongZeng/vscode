@@ -63,6 +63,9 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 
 	get linesAdded() {
 		return this._textModelChangeService.diffInfo.map(diff => {
+			if (this.kind === ChatEditKind.Deleted) {
+				return 0;
+			}
 			let added = 0;
 			for (const c of diff.changes) {
 				added += Math.max(0, c.modified.endLineNumberExclusive - c.modified.startLineNumber);
@@ -72,6 +75,9 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 	}
 	get linesRemoved() {
 		return this._textModelChangeService.diffInfo.map(diff => {
+			if (this.kind === ChatEditKind.Created) {
+				return 0;
+			}
 			let removed = 0;
 			for (const c of diff.changes) {
 				removed += Math.max(0, c.original.endLineNumberExclusive - c.original.startLineNumber);
