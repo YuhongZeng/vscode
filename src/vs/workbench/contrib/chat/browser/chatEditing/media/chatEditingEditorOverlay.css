@@ -128,3 +128,30 @@
 	background-color: var(--vscode-toolbar-hoverBackground);
 	transition: left 0.5s linear;
 }
+
+.chat-editor-overlay-widget .action-item > .action-label.has-keybinding,
+.chat-diff-change-content-widget .action-item > .action-label.has-keybinding {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+
+.chat-editor-overlay-widget .action-item > .action-label.has-keybinding .chat-editing-action-keybinding,
+.chat-diff-change-content-widget .action-item > .action-label.has-keybinding .chat-editing-action-keybinding {
+	font-size: 11px;
+	padding: 2px 4px;
+	border-radius: 3px;
+	background-color: var(--vscode-keybindingLabel-background, rgba(0, 0, 0, 0.1));
+	color: var(--vscode-keybindingLabel-foreground);
+	border: 1px solid var(--vscode-keybindingLabel-border, rgba(0, 0, 0, 0.2));
+	box-shadow: inset 0 -1px 0 var(--vscode-keybindingLabel-bottomBorder, rgba(0, 0, 0, 0.2));
+}
+
+.chat-editor-overlay-widget .action-item.primary > .action-label.has-keybinding .chat-editing-action-keybinding,
+.chat-diff-change-content-widget .action-item.primary > .action-label.has-keybinding .chat-editing-action-keybinding {
+	background-color: rgba(0, 0, 0, 0.2);
+	border-color: rgba(255, 255, 255, 0.2);
+	box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.2);
+	color: var(--vscode-button-foreground);
+}

@@ -5,7 +5,7 @@
 
 import './media/chatEditorController.css';
 
-import { getTotalWidth } from '../../../../../base/browser/dom.js';
+import { $, append, clearNode, getTotalWidth } from '../../../../../base/browser/dom.js';
 import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore, dispose, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { autorun, constObservable, derived, IObservable, observableFromEvent, observableValue } from '../../../../../base/common/observable.js';
@@ -45,6 +45,7 @@ import { LinkedList } from '../../../../../base/common/linkedList.js';
 import { ChatEditingExplanationWidgetManager } from './chatEditingExplanationWidget.js';
 import { IChatEditingExplanationModelManager } from './chatEditingExplanationModelManager.js';
 import { IChatWidgetService } from '../chat.js';
+import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 
 export interface IDocumentDiff2 extends IDocumentDiff {
@@ -124,6 +125,9 @@ export class ChatEditingCodeEditorIntegration implements IModifiedFileEntryEdito
 		));
 
 		const enabledObs = derived(r => {
+			if (!_chatEditingService.editingEditorVisibility.read(r)) {
+				return false;
+			}
 			if (!isEqual(codeEditorObs.model.read(r)?.uri, documentDiffInfo.read(r).modifiedModel.uri)) {
 				return false;
 			}
@@ -753,6 +757,7 @@ class DiffHunkWidget implements IOverlayWidget, IModifiedFileEntryChangeHunk {
 		private _versionId: number,
 		private _lineDelta: number,
 		@IInstantiationService instaService: IInstantiationService,
+		@IKeybindingService keybindingService: IKeybindingService,
 	) {
 		this._domNode = document.createElement('div');
 		this._domNode.className = 'chat-diff-change-content-widget';
@@ -776,6 +781,26 @@ class DiffHunkWidget implements IOverlayWidget, IModifiedFileEntryChangeHunk {
 							super.render(container);
 							if (isPrimary) {
 								this.element?.classList.add('primary');
+							}
+						}
+						override updateLabel(): void {
+							if (this.options.label && this.label) {
+								clearNode(this.label);
+
+								const keybinding = keybindingService.lookupKeybinding(this.action.id);
+								if (keybinding) {
+									const kbLabel = keybinding.getLabel();
+									if (kbLabel) {
+										const kbSpan = append(this.label, $('span.chat-editing-action-keybinding'));
+										kbSpan.textContent = kbLabel;
+									}
+									this.label.classList.add('has-keybinding');
+								} else {
+									this.label.classList.remove('has-keybinding');
+								}
+
+								const labelSpan = append(this.label, $('span'));
+								labelSpan.textContent = this.action.label;
 							}
 						}
 					};

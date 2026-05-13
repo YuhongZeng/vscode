@@ -12,10 +12,10 @@ import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedF
 import { MenuId } from '../../../../../platform/actions/common/actions.js';
 import { ActionViewItem, IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { IAction, IActionRunner } from '../../../../../base/common/actions.js';
-import { $, addDisposableGenericMouseMoveListener, append } from '../../../../../base/browser/dom.js';
+import { $, addDisposableGenericMouseMoveListener, append, clearNode } from '../../../../../base/browser/dom.js';
 import { assertType } from '../../../../../base/common/types.js';
 import { localize } from '../../../../../nls.js';
-import { AcceptAction, navigationBearingFakeActionId, RejectAction, ChatEditingEditorFileContentMenuId, fileNavigationBearingFakeActionId } from './chatEditingEditorActions.js';
+import { AcceptAction, AcceptHunkAction, navigationBearingFakeActionId, RejectAction, fileNavigationBearingFakeActionId, ChatEditingEditorFileContentMenuId } from './chatEditingEditorActions.js';
 import { IWorkbenchContribution } from '../../../../common/contributions.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { EditorGroupView } from '../../../../browser/parts/editor/editorGroupView.js';
@@ -28,6 +28,9 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
+import { isCodeEditor } from '../../../../../editor/browser/editorBrowser.js';
+import { Range } from '../../../../../editor/common/core/range.js';
+import { Position } from '../../../../../editor/common/core/position.js';
 
 export class ChatEditingAcceptRejectActionViewItem extends ActionViewItem {
 
@@ -36,10 +39,10 @@ export class ChatEditingAcceptRejectActionViewItem extends ActionViewItem {
 	constructor(
 		action: IAction,
 		options: IBaseActionViewItemOptions,
-		private readonly _entry: IObservable<IModifiedFileEntry | undefined>,
+		private readonly _activeData: IObservable<{ session: IChatEditingSession; entry: IModifiedFileEntry }[] | undefined> | undefined,
 		private readonly _editor: { focus(): void } | undefined,
 		private readonly _keybindingService: IKeybindingService,
-		private readonly _primaryActionIds: readonly string[] = [AcceptAction.ID],
+		private readonly _primaryActionIds: readonly string[] = [AcceptAction.ID, AcceptHunkAction.ID],
 	) {
 		super(undefined, action, { ...options, icon: false, label: true, keybindingNotRenderedWithLabel: true });
 	}
@@ -51,7 +54,7 @@ export class ChatEditingAcceptRejectActionViewItem extends ActionViewItem {
 			this.element?.classList.add('primary');
 		}
 
-		if (this._action.id === AcceptAction.ID) {
+		if (this._action.id === AcceptAction.ID && this._activeData) {
 
 			const listener = this._store.add(new MutableDisposable());
 
@@ -60,7 +63,8 @@ export class ChatEditingAcceptRejectActionViewItem extends ActionViewItem {
 				assertType(this.label);
 				assertType(this.element);
 
-				const ctrl = this._entry.read(r)?.autoAcceptController.read(r);
+				const data = this._activeData!.read(r);
+				const ctrl = data?.[0]?.entry.autoAcceptController.read(r);
 				if (ctrl) {
 
 					const ratio = -100 * (ctrl.remaining / ctrl.total);
@@ -74,6 +78,28 @@ export class ChatEditingAcceptRejectActionViewItem extends ActionViewItem {
 					listener.clear();
 				}
 			}));
+		}
+	}
+
+
+	override updateLabel(): void {
+		if (this.options.label && this.label) {
+			clearNode(this.label);
+
+			const keybinding = this._keybindingService.lookupKeybinding(this.action.id);
+			if (keybinding) {
+				const kbLabel = keybinding.getLabel();
+				if (kbLabel) {
+					const kbSpan = append(this.label, $('span.chat-editing-action-keybinding'));
+					kbSpan.textContent = kbLabel;
+				}
+				this.label.classList.add('has-keybinding');
+			} else {
+				this.label.classList.remove('has-keybinding');
+			}
+
+			const labelSpan = append(this.label, $('span'));
+			labelSpan.textContent = this.action.label;
 		}
 	}
 
@@ -107,9 +133,9 @@ export class ChatEditorOverlayWidget extends Disposable {
 
 	private readonly _showStore = this._store.add(new DisposableStore());
 
-	private readonly _session = observableValue<IChatEditingSession | undefined>(this, undefined);
-	private readonly _entry = observableValue<IModifiedFileEntry | undefined>(this, undefined);
-	private readonly _isBusy: IObservable<boolean | undefined>;
+	private readonly _activeData = observableValue<{ session: IChatEditingSession; entry: IModifiedFileEntry }[] | undefined>(this, undefined);
+
+	private readonly _isBusy: IObservable<boolean>;
 
 	private readonly _navigationBearings = observableValue<{ changeCount: number; activeIdx: number; entriesCount: number; activeEntryIdx: number }>(this, { changeCount: -1, activeIdx: -1, entriesCount: -1, activeEntryIdx: -1 });
 
@@ -123,8 +149,8 @@ export class ChatEditorOverlayWidget extends Disposable {
 		this._domNode.classList.add('chat-editor-overlay-widget');
 
 		this._isBusy = derived(r => {
-			const entry = this._entry.read(r);
-			return entry?.waitsForLastEdits.read(r);
+			const data = this._activeData.read(r);
+			return data?.some(d => d.entry.waitsForLastEdits.read(r)) ?? false;
 		});
 
 
@@ -160,37 +186,27 @@ export class ChatEditorOverlayWidget extends Disposable {
 		return this._domNode;
 	}
 
-	show(session: IChatEditingSession, entry: IModifiedFileEntry | undefined, indicies: { entryIndex: IObservable<number>; changeIndex: IObservable<number> }) {
+	show(data: { session: IChatEditingSession; entry: IModifiedFileEntry }[], changeIndex: IObservable<number>, fileNavigation: IObservable<{ entriesCount: number; activeEntryIdx: number }>) {
 
 		this._showStore.clear();
 
 		transaction(tx => {
-			this._session.set(session, tx);
-			this._entry.set(entry, tx);
+			this._activeData.set(data, tx);
 		});
 
 		this._showStore.add(autorun(r => {
 
-			const entryIndex = indicies.entryIndex.read(r);
-			const changeIndex = indicies.changeIndex.read(r);
+			const activeIdx = changeIndex.read(r);
+			const { entriesCount, activeEntryIdx } = fileNavigation.read(r);
 
-			const entries = session.entries.read(r);
-
-			const activeIdx = entryIndex !== undefined && changeIndex !== undefined
-				? changeIndex
-				: -1;
-
-			// Use local change count instead of global
+			// Aggregate change count across all entries
 			let changeCount = 0;
-			if (entry) {
-				changeCount = entry.changesCount.read(r);
+			for (const { entry } of data) {
+				changeCount += entry.changesCount.read(r);
 			}
 
-			const modifiedEntriesCount = entries.filter(e => e.state.read(r) === ModifiedFileEntryState.Modified).length;
-
-			this._navigationBearings.set({ changeCount, activeIdx, entriesCount: modifiedEntriesCount, activeEntryIdx: entryIndex ?? -1 }, undefined);
+			this._navigationBearings.set({ changeCount, activeIdx, entriesCount, activeEntryIdx }, undefined);
 		}));
-
 
 		this._domNode.appendChild(this._toolbarNode);
 		this._domNode.appendChild(this._fileToolbarNode);
@@ -282,7 +298,7 @@ export class ChatEditorOverlayWidget extends Disposable {
 			}
 
 			if (action.id === AcceptAction.ID || action.id === RejectAction.ID) {
-				return new ChatEditingAcceptRejectActionViewItem(action, options, that._entry, that._editor, that._keybindingService);
+				return new ChatEditingAcceptRejectActionViewItem(action, options, that._activeData, that._editor, that._keybindingService);
 			}
 
 			return undefined;
@@ -309,16 +325,15 @@ export class ChatEditorOverlayWidget extends Disposable {
 			menuOptions: { renderShortTitle: true },
 			actionViewItemProvider
 		}));
-
 	}
 
 	hide() {
 		transaction(tx => {
-			this._session.set(undefined, tx);
-			this._entry.set(undefined, tx);
+			this._activeData.set(undefined, tx);
 			this._navigationBearings.set({ changeCount: -1, activeIdx: -1, entriesCount: -1, activeEntryIdx: -1 }, tx);
 		});
 		this._showStore.clear();
+		this._toolbarNode.remove();
 	}
 }
 
@@ -364,6 +379,24 @@ class ChatEditingOverlayController {
 
 		const activeEditorSignal = observableSignalFromEvent(this, Event.any(group.onDidActiveEditorChange, group.onDidModelChange));
 
+		const cursorPosition = observableValue<Position | null>(this, null);
+		const cursorListener = this._store.add(new MutableDisposable());
+		const updateCursorPosition = () => {
+			const control = group.activeEditorPane?.getControl();
+			if (isCodeEditor(control)) {
+				cursorPosition.set(control.getPosition(), undefined);
+				cursorListener.value = control.onDidChangeCursorPosition(() => {
+					cursorPosition.set(control.getPosition(), undefined);
+				});
+			} else {
+				cursorPosition.set(null, undefined);
+				cursorListener.value = undefined;
+			}
+		};
+
+		this._store.add(Event.any(group.onDidActiveEditorChange, group.onDidModelChange)(updateCursorPosition));
+		updateCursorPosition();
+
 		const activeUriObs = derivedOpts({ equalsFn: isEqual }, r => {
 
 			activeEditorSignal.read(r); // signal
@@ -372,6 +405,30 @@ class ChatEditingOverlayController {
 			const uri = EditorResourceAccessor.getOriginalUri(editor?.input, { supportSideBySide: SideBySideEditor.PRIMARY });
 
 			return uri;
+		});
+
+		const fileNavigation = derived(r => {
+			const sessions = chatEditingService.editingSessionsObs.read(r).filter(s => s.isGlobalEditingSession);
+
+			const modifiedUris = new Set<string>();
+
+			for (const session of sessions) {
+				const entries = session.entries.read(r);
+				for (const entry of entries) {
+					if (entry.state.read(r) === ModifiedFileEntryState.Modified) {
+						modifiedUris.add(entry.modifiedURI.toString());
+					}
+				}
+			}
+
+			const activeUri = activeUriObs.read(r);
+			let activeEntryIdx = -1;
+			if (activeUri && modifiedUris.has(activeUri.toString())) {
+				const sortedUris = Array.from(modifiedUris).sort();
+				activeEntryIdx = sortedUris.indexOf(activeUri.toString());
+			}
+
+			return { entriesCount: modifiedUris.size, activeEntryIdx };
 		});
 
 		const sessionAndEntry = derived(r => {
@@ -383,17 +440,24 @@ class ChatEditingOverlayController {
 				return undefined;
 			}
 
+			const data: { session: IChatEditingSession; entry: IModifiedFileEntry }[] = [];
+
 			// Directly query global editing sessions (inline chat has its own overlay)
+			if (!chatEditingService.editingEditorVisibility.read(r)) {
+				return undefined;
+			}
+
 			for (const session of chatEditingService.editingSessionsObs.read(r)) {
 				if (!session.isGlobalEditingSession) {
 					continue;
 				}
 				const entry = session.readEntry(uri, r);
 				if (entry) {
-					return { session, entry };
+					data.push({ session, entry });
 				}
 			}
-			return undefined;
+
+			return data.length > 0 ? data : undefined;
 		});
 
 		this._store.add(autorun(r => {
@@ -405,27 +469,70 @@ class ChatEditingOverlayController {
 				return;
 			}
 
-			const { session, entry } = data;
+			const isAnyModified = data.some(d => d.entry.state.read(r) === ModifiedFileEntryState.Modified);
 
-			if (entry?.state.read(r) === ModifiedFileEntryState.Modified) {
+			if (isAnyModified) {
 				// any session with changes
 				const editorPane = group.activeEditorPane;
 				assertType(editorPane);
 
-				const changeIndex = derived(r => entry
-					? entry.getEditorIntegration(editorPane).currentIndex.read(r)
-					: 0);
-
-				const entryIndex = derived(r => {
-					if (!entry) {
-						return 0;
+				// Initialize editor integrations so that change block UIs are rendered
+				for (const { entry } of data) {
+					if (entry.state.read(r) === ModifiedFileEntryState.Modified) {
+						entry.getEditorIntegration(editorPane);
 					}
-					const entries = session.entries.read(r);
-					const modifiedEntries = entries.filter(e => e.state.read(r) === ModifiedFileEntryState.Modified);
-					return modifiedEntries.indexOf(entry);
+				}
+
+				const changeIndex = derived(r => {
+					const position = cursorPosition.read(r);
+					if (!position) {
+						return -1;
+					}
+
+					const allChanges: { range: Range }[] = [];
+					for (const { entry } of data) {
+						if (entry.state.read(r) !== ModifiedFileEntryState.Modified) {
+							continue;
+						}
+						const diff = entry.diffInfo?.read(r);
+						if (diff) {
+							for (const change of diff.changes) {
+								const modifiedRange = change.modified.isEmpty
+									? new Range(change.modified.startLineNumber - 1, 1, change.modified.startLineNumber, 1)
+									: change.modified.toInclusiveRange();
+								if (modifiedRange) {
+									allChanges.push({ range: modifiedRange });
+								}
+							}
+						}
+					}
+
+					if (allChanges.length === 0) {
+						return -1;
+					}
+
+					allChanges.sort((a, b) => Range.compareRangesUsingStarts(a.range, b.range));
+
+					let newIndex = -1;
+					for (let i = 0; i < allChanges.length; i++) {
+						const range = allChanges[i].range;
+						if (range.containsPosition(position)) {
+							newIndex = i;
+							break;
+						} else if (Position.isBefore(position, range.getStartPosition())) {
+							newIndex = i;
+							break;
+						}
+					}
+
+					if (newIndex === -1) {
+						newIndex = allChanges.length - 1;
+					}
+
+					return newIndex;
 				});
 
-				widget.show(session, entry, { entryIndex, changeIndex });
+				widget.show(data, changeIndex, fileNavigation);
 				show();
 
 			} else {
