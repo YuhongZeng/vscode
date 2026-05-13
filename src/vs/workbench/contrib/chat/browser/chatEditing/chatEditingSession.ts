@@ -12,7 +12,7 @@ import { MarkdownString } from '../../../../../base/common/htmlContent.js';
 import { Iterable } from '../../../../../base/common/iterator.js';
 import { Disposable, DisposableStore, dispose } from '../../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
-import { derived, IObservable, IReader, ITransaction, observableValue, transaction } from '../../../../../base/common/observable.js';
+import { autorun, derived, IObservable, IReader, ITransaction, observableValue, transaction } from '../../../../../base/common/observable.js';
 import { isEqual } from '../../../../../base/common/resources.js';
 import { hasKey, Mutable } from '../../../../../base/common/types.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -37,7 +37,7 @@ import { MultiDiffEditor } from '../../../multiDiffEditor/browser/multiDiffEdito
 import { MultiDiffEditorInput } from '../../../multiDiffEditor/browser/multiDiffEditorInput.js';
 import { CellUri, ICellEditOperation } from '../../../notebook/common/notebookCommon.js';
 import { INotebookService } from '../../../notebook/common/notebookService.js';
-import { chatEditingSessionIsReady, ChatEditingSessionState, ChatEditKind, getMultiDiffSourceUri, IChatEditingSession, IEditSessionEntryDiff, IModifiedEntryTelemetryInfo, IModifiedFileEntry, ISnapshotEntry, IStreamingEdits, ModifiedFileEntryState } from '../../common/editing/chatEditingService.js';
+import { chatEditingSessionIsReady, ChatEditingSessionState, ChatEditKind, CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, getMultiDiffSourceUri, IChatEditingSession, IEditSessionEntryDiff, IModifiedEntryTelemetryInfo, IModifiedFileEntry, ISnapshotEntry, IStreamingEdits, ModifiedFileEntryState, parseChatMultiDiffUri } from '../../common/editing/chatEditingService.js';
 import { IChatResponseModel } from '../../common/model/chatModel.js';
 import { IChatProgress, IChatWorkspaceEdit } from '../../common/chatService/chatService.js';
 import { ChatAgentLocation } from '../../common/constants.js';
@@ -152,6 +152,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 	}>();
 
 	private readonly _entriesObs = observableValue<readonly AbstractChatEditingModifiedFileEntry[]>(this, []);
+	private readonly _pendingEntries = new ResourceMap<Promise<AbstractChatEditingModifiedFileEntry | undefined>>();
 	public readonly entries: IObservable<readonly IModifiedFileEntry[]> = derived(reader => {
 		const state = this._state.read(reader);
 		if (state === ChatEditingSessionState.Disposed || state === ChatEditingSessionState.Initial) {
@@ -213,6 +214,22 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 			hasHistory && this._state.read(reader) === ChatEditingSessionState.Idle);
 
 		this._init(transferFrom);
+
+		this._register(autorun(reader => {
+			const entries = this._entriesObs.read(reader);
+			const allHandled = entries.length > 0 && entries.every(e => e.state.read(reader) !== ModifiedFileEntryState.Modified);
+			if (allHandled) {
+				if (this._editorPane?.input instanceof MultiDiffEditorInput && !this._editorPane.input.isDisposed()) {
+					const input = this._editorPane.input;
+					if (input.multiDiffSource?.scheme === CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME) {
+						const parsed = parseChatMultiDiffUri(input.multiDiffSource);
+						if (!parsed.showPreviousChanges) {
+							this._editorPane.group.closeEditor(input);
+						}
+					}
+				}
+			}
+		}));
 	}
 
 	private _getTimelineDelegate(): IChatEditingTimelineFsDelegate {
@@ -440,6 +457,10 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 	async show(previousChanges?: boolean, title?: string): Promise<void> {
 		this._assertNotDisposed();
 
+		if (!this.isGlobalEditingSession) {
+			return;
+		}
+
 		const multiDiffSourceUri = getMultiDiffSourceUri(this, previousChanges, title);
 
 		if (this._editorPane?.input) {
@@ -495,7 +516,9 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 	}
 
 	override dispose() {
-		this._assertNotDisposed();
+		if (this.isDisposed) {
+			return;
+		}
 		this.clearExplanations();
 		dispose(this._entriesObs.get());
 		super.dispose();
@@ -967,6 +990,27 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 	private async _acceptEdits(resource: URI, textEdits: (TextEdit | ICellEditOperation)[], isLastEdits: boolean, responseModel: IChatResponseModel): Promise<void> {
 		const entry = await this._getOrCreateModifiedFileEntry(resource, NotExistBehavior.Create, this._getTelemetryInfoForModel(responseModel));
 
+		if (entry instanceof ChatEditingModifiedDocumentEntry && textEdits.length > 0) {
+			const model = entry.modifiedModel;
+			const lineCount = model.getLineCount();
+			const maxColumn = model.getLineMaxColumn(lineCount);
+			
+			for (let i = 0; i < textEdits.length; i++) {
+				const edit = textEdits[i];
+				if (TextEdit.isTextEdit(edit)) {
+					if (edit.range.startLineNumber === lineCount &&
+						edit.range.startColumn === maxColumn &&
+						edit.range.endLineNumber === lineCount &&
+						edit.range.endColumn === maxColumn) {
+						if (edit.text && !edit.text.startsWith('\n') && !edit.text.startsWith('\r\n') && maxColumn > 1) {
+							const eol = model.getEOL();
+							textEdits[i] = { ...edit, text: eol + edit.text };
+						}
+					}
+				}
+			}
+		}
+
 		// Record edit operations in the timeline if there are actual edits
 		if (textEdits.length > 0) {
 			this._recordEditOperations(entry, resource, textEdits, responseModel);
@@ -1055,6 +1099,18 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 			}
 		}
 
+		// Check if there is already a pending creation for this resource to prevent multiple instantiations
+		const pendingEntryPromise = this._pendingEntries.get(resource);
+		if (pendingEntryPromise) {
+			const pendingEntry = await pendingEntryPromise;
+			if (pendingEntry) {
+				if (telemetryInfo.requestId !== pendingEntry.telemetryInfo.requestId) {
+					pendingEntry.updateTelemetryInfo(telemetryInfo);
+				}
+				return pendingEntry;
+			}
+		}
+
 		let entry: AbstractChatEditingModifiedFileEntry;
 		const existingExternalEntry = this._lookupExternalEntry(resource);
 		if (existingExternalEntry) {
@@ -1066,11 +1122,20 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		} else {
 			const initialContent = _initialContent ?? this._initialFileContents.get(resource);
 			// This gets manually disposed in .dispose() or in .restoreSnapshot()
-			const maybeEntry = await this._createModifiedFileEntry(resource, telemetryInfo, ifNotExists, initialContent);
-			if (!maybeEntry) {
-				return undefined;
+
+			const createPromise = this._createModifiedFileEntry(resource, telemetryInfo, ifNotExists, initialContent);
+			this._pendingEntries.set(resource, createPromise);
+
+			try {
+				const maybeEntry = await createPromise;
+				if (!maybeEntry) {
+					return undefined;
+				}
+				entry = maybeEntry;
+			} finally {
+				this._pendingEntries.delete(resource);
 			}
-			entry = maybeEntry;
+
 			if (initialContent === undefined) {
 				this._initialFileContents.set(resource, entry.initialContent);
 			}
