@@ -991,40 +991,39 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		const entry = await this._getOrCreateModifiedFileEntry(resource, NotExistBehavior.Create, this._getTelemetryInfoForModel(responseModel));
 
 		if (entry instanceof ChatEditingModifiedDocumentEntry && textEdits.length > 0) {
-			const model = entry.originalModel;
-			const lineCount = model.getLineCount();
-			const maxColumn = model.getLineMaxColumn(lineCount);
+			const model = entry.modifiedModel;
+			let lineCount = model.getLineCount();
+			let maxColumn = model.getLineMaxColumn(lineCount);
 
 			for (let i = 0; i < textEdits.length; i++) {
 				const edit = textEdits[i];
 				if (TextEdit.isTextEdit(edit)) {
-					// Check if the edit is inserting at the end of the document
-					const isAtEof = (edit.range.startLineNumber === lineCount && edit.range.startColumn === maxColumn) ||
-						(edit.range.startLineNumber > lineCount);
+					// Check if the edit is targeting a line that doesn't exist yet
+					if (edit.range.startLineNumber > lineCount) {
+						let newText = edit.text;
 
-					if (isAtEof) {
-						if (edit.text && !edit.text.startsWith('\n') && !edit.text.startsWith('\r\n') && maxColumn > 1) {
-							const eol = model.getEOL();
-							// Normalize the range to the actual end of the document to avoid out-of-bounds errors
-							const normalizedRange = {
-								startLineNumber: lineCount,
-								startColumn: maxColumn,
-								endLineNumber: lineCount,
-								endColumn: maxColumn
-							};
+						// If the last line is not empty, and the text doesn't already start with a newline, we need to prepend one
+						if (maxColumn > 1 && newText && !newText.startsWith('\n') && !newText.startsWith('\r\n')) {
+							newText = model.getEOL() + newText;
+						}
 
-							// If we are replacing the exact end of the document, we shouldn't prepend the EOL
-							// because it makes the previous line appear as "modified" rather than just "inserted" after it.
-							// The proper way is to keep the insertion text as-is but shift the range to the NEXT line (out of bounds)
-							// so that the text model natively handles it as an appending line creation.
-							const shiftedRange = {
-								startLineNumber: lineCount + 1,
-								startColumn: 1,
-								endLineNumber: lineCount + 1,
-								endColumn: 1
-							};
+						// Normalize the range to the actual end of the document to avoid out-of-bounds errors
+						const normalizedRange = {
+							startLineNumber: lineCount,
+							startColumn: maxColumn,
+							endLineNumber: lineCount,
+							endColumn: maxColumn
+						};
 
-							textEdits[i] = { ...edit, range: shiftedRange, text: edit.text };
+						textEdits[i] = { ...edit, range: normalizedRange, text: newText };
+
+						// Update our local tracking of lineCount and maxColumn for subsequent edits in the same batch
+						const newLines = newText.split(/\r\n|\n/);
+						if (newLines.length > 1) {
+							lineCount += newLines.length - 1;
+							maxColumn = newLines[newLines.length - 1].length + 1;
+						} else {
+							maxColumn += newLines[0].length;
 						}
 					}
 				}
