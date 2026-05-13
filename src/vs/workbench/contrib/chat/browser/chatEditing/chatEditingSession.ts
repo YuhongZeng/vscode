@@ -991,7 +991,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		const entry = await this._getOrCreateModifiedFileEntry(resource, NotExistBehavior.Create, this._getTelemetryInfoForModel(responseModel));
 
 		if (entry instanceof ChatEditingModifiedDocumentEntry && textEdits.length > 0) {
-			const model = entry.modifiedModel;
+			const model = entry.originalModel;
 			const lineCount = model.getLineCount();
 			const maxColumn = model.getLineMaxColumn(lineCount);
 
