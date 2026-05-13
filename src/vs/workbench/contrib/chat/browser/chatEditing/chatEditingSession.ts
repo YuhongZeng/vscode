@@ -1012,7 +1012,19 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 								endLineNumber: lineCount,
 								endColumn: maxColumn
 							};
-							textEdits[i] = { ...edit, range: normalizedRange, text: eol + edit.text };
+
+							// If we are replacing the exact end of the document, we shouldn't prepend the EOL
+							// because it makes the previous line appear as "modified" rather than just "inserted" after it.
+							// The proper way is to keep the insertion text as-is but shift the range to the NEXT line (out of bounds)
+							// so that the text model natively handles it as an appending line creation.
+							const shiftedRange = {
+								startLineNumber: lineCount + 1,
+								startColumn: 1,
+								endLineNumber: lineCount + 1,
+								endColumn: 1
+							};
+
+							textEdits[i] = { ...edit, range: shiftedRange, text: edit.text };
 						}
 					}
 				}
