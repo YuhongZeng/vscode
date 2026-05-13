@@ -994,17 +994,25 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 			const model = entry.modifiedModel;
 			const lineCount = model.getLineCount();
 			const maxColumn = model.getLineMaxColumn(lineCount);
-			
+
 			for (let i = 0; i < textEdits.length; i++) {
 				const edit = textEdits[i];
 				if (TextEdit.isTextEdit(edit)) {
-					if (edit.range.startLineNumber === lineCount &&
-						edit.range.startColumn === maxColumn &&
-						edit.range.endLineNumber === lineCount &&
-						edit.range.endColumn === maxColumn) {
+					// Check if the edit is inserting at the end of the document
+					const isAtEof = (edit.range.startLineNumber === lineCount && edit.range.startColumn === maxColumn) ||
+						(edit.range.startLineNumber > lineCount);
+
+					if (isAtEof) {
 						if (edit.text && !edit.text.startsWith('\n') && !edit.text.startsWith('\r\n') && maxColumn > 1) {
 							const eol = model.getEOL();
-							textEdits[i] = { ...edit, text: eol + edit.text };
+							// Normalize the range to the actual end of the document to avoid out-of-bounds errors
+							const normalizedRange = {
+								startLineNumber: lineCount,
+								startColumn: maxColumn,
+								endLineNumber: lineCount,
+								endColumn: maxColumn
+							};
+							textEdits[i] = { ...edit, range: normalizedRange, text: eol + edit.text };
 						}
 					}
 				}
