@@ -54,6 +54,10 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 	protected readonly _stateObs = observableValue<ModifiedFileEntryState>(this, ModifiedFileEntryState.Modified);
 	readonly state: IObservable<ModifiedFileEntryState> = this._stateObs;
 
+	updateState(state: ModifiedFileEntryState, tx: ITransaction | undefined): void {
+		this._stateObs.set(state, tx);
+	}
+
 	protected readonly _waitsForLastEdits = observableValue<boolean>(this, false);
 	readonly waitsForLastEdits: IObservable<boolean> = this._waitsForLastEdits;
 
@@ -88,6 +92,8 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 		return this._telemetryInfo;
 	}
 
+	protected readonly _sharingSessions = new Map<string, IModifiedEntryTelemetryInfo>();
+
 	readonly createdInRequestId: string | undefined;
 
 	get lastModifyingRequestId() {
@@ -117,6 +123,8 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 		@IAiEditTelemetryService private readonly _aiEditTelemetryService: IAiEditTelemetryService,
 	) {
 		super();
+
+		this._sharingSessions.set(this._telemetryInfo.sessionResource.toString(), this._telemetryInfo);
 
 		if (kind === ChatEditKind.Created) {
 			this.createdInRequestId = this._telemetryInfo.requestId;
@@ -192,8 +200,9 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 		}
 	}
 
-	acquire() {
+	acquire(telemetryInfo: IModifiedEntryTelemetryInfo) {
 		this._refCounter++;
+		this._sharingSessions.set(telemetryInfo.sessionResource.toString(), telemetryInfo);
 		return this;
 	}
 
@@ -239,14 +248,19 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 		await this._doAccept();
 
 		return (tx: ITransaction) => {
+			const wasModified = this._stateObs.get() === ModifiedFileEntryState.Modified;
 			this._userEditScheduler.cancel();
 			this._stateObs.set(ModifiedFileEntryState.Accepted, tx);
 			this._autoAcceptCtrl.set(undefined, tx);
-			this._notifySessionAction('accepted', options?.isFromApi);
+			this._doAcceptTransition(tx);
+			if (wasModified) {
+				this._notifySessionAction('accepted', options?.isFromApi);
+			}
 		};
 	}
 
 	protected abstract _doAccept(): Promise<void>;
+	protected _doAcceptTransition(tx: ITransaction): void { }
 
 	async reject(): Promise<void> {
 		const callback = await this.rejectDeferred();
@@ -262,38 +276,45 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 			return undefined;
 		}
 
-		this._notifySessionAction('rejected', options?.isFromApi);
 		await this._doReject();
 
 		return (tx: ITransaction) => {
+			const wasModified = this._stateObs.get() === ModifiedFileEntryState.Modified;
 			this._userEditScheduler.cancel();
 			this._stateObs.set(ModifiedFileEntryState.Rejected, tx);
 			this._autoAcceptCtrl.set(undefined, tx);
+			this._doRejectTransition(tx);
+			if (wasModified) {
+				this._notifySessionAction('rejected', options?.isFromApi);
+			}
 		};
 	}
 
 	protected abstract _doReject(): Promise<void>;
+	protected _doRejectTransition(tx: ITransaction): void { }
 
 	protected _notifySessionAction(outcome: 'accepted' | 'rejected' | 'userModified', isFromApi?: boolean) {
-		this._notifyAction({ kind: 'chatEditingSessionAction', uri: this.modifiedURI, hasRemainingEdits: false, outcome, isFromApi });
+		for (const telemetryInfo of this._sharingSessions.values()) {
+			this._notifyAction({ kind: 'chatEditingSessionAction', uri: this.modifiedURI, hasRemainingEdits: false, outcome, isFromApi }, telemetryInfo);
+		}
 	}
 
-	protected _notifyAction(action: ChatUserAction) {
+	protected _notifyAction(action: ChatUserAction, telemetryInfo: IModifiedEntryTelemetryInfo = this._telemetryInfo) {
 		if (action.kind === 'chatEditingHunkAction') {
 			this._aiEditTelemetryService.handleCodeAccepted({
 				suggestionId: undefined, // TODO@hediet try to figure this out
 				acceptanceMethod: 'accept',
 				presentation: 'highlightedEdit',
-				modelId: this._telemetryInfo.modelId,
-				modeId: this._telemetryInfo.modeId,
-				applyCodeBlockSuggestionId: this._telemetryInfo.applyCodeBlockSuggestionId,
+				modelId: telemetryInfo.modelId,
+				modeId: telemetryInfo.modeId,
+				applyCodeBlockSuggestionId: telemetryInfo.applyCodeBlockSuggestionId,
 				editDeltaInfo: new EditDeltaInfo(
 					action.linesAdded,
 					action.linesRemoved,
 					-1,
 					-1,
 				),
-				feature: this._telemetryInfo.feature,
+				feature: telemetryInfo.feature,
 				languageId: action.languageId,
 				source: undefined,
 			});
@@ -301,13 +322,13 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 
 		this._chatService.notifyUserAction({
 			action,
-			agentId: this._telemetryInfo.agentId,
-			modelId: this._telemetryInfo.modelId,
-			modeId: this._telemetryInfo.modeId,
-			command: this._telemetryInfo.command,
-			sessionResource: this._telemetryInfo.sessionResource,
-			requestId: this._telemetryInfo.requestId,
-			result: this._telemetryInfo.result
+			agentId: telemetryInfo.agentId,
+			modelId: telemetryInfo.modelId,
+			modeId: telemetryInfo.modeId,
+			command: telemetryInfo.command,
+			sessionResource: telemetryInfo.sessionResource,
+			requestId: telemetryInfo.requestId,
+			result: telemetryInfo.result
 		});
 	}
 
@@ -411,4 +432,5 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 	 * Reloads the model from disk to ensure it's in sync with file system changes.
 	 */
 	abstract revertToDisk(): Promise<void>;
+
 }

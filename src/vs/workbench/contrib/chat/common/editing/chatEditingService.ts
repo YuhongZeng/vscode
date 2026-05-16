@@ -40,6 +40,16 @@ export interface IChatEditingService {
 	readonly editingSessionsObs: IObservable<readonly IChatEditingSession[]>;
 
 	/**
+	 * Controls whether the editing diffs are visible in the editor.
+	 */
+	readonly editingEditorVisibility: IObservable<boolean>;
+
+	/**
+	 * Sets whether the editing diffs are visible in the editor.
+	 */
+	setEditingEditorVisibility(visible: boolean): void;
+
+	/**
 	 * Creates a new short lived editing session
 	 */
 	createEditingSession(chatModel: ChatModel): IChatEditingSession;
@@ -356,12 +366,12 @@ export interface IModifiedFileEntryEditorIntegration extends IDisposable {
 	 * Accept the change given or the nearest
 	 * @param change An opaque change object
 	 */
-	acceptNearestChange(change?: IModifiedFileEntryChangeHunk): Promise<void>;
+	acceptNearestChange(change: IModifiedFileEntryChangeHunk | undefined): Promise<void>;
 
 	/**
 	 * @see `acceptNearestChange`
 	 */
-	rejectNearestChange(change?: IModifiedFileEntryChangeHunk): Promise<void>;
+	rejectNearestChange(change: IModifiedFileEntryChangeHunk | undefined): Promise<void>;
 
 	/**
 	 * Toggle between diff-editor and normal editor
@@ -432,6 +442,8 @@ export const enum ChatEditingSessionState {
 	Idle = 2,
 	Disposed = 3
 }
+
+
 
 export const CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME = 'chat-editing-multi-diff-source';
 

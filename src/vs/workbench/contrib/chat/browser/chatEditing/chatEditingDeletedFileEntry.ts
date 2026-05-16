@@ -235,13 +235,19 @@ export class ChatEditingDeletedFileEntry extends AbstractChatEditingModifiedFile
 
 	protected override async _doAccept(): Promise<void> {
 		// File deletion is already done - just collapse the entry
-		this._multiDiffEntryDelegate.collapse(undefined);
+	}
+
+	protected override _doAcceptTransition(tx: ITransaction): void {
+		this._multiDiffEntryDelegate.collapse(tx);
 	}
 
 	protected override async _doReject(): Promise<void> {
 		// Restore the file from original content
 		await this._fileService.writeFile(this.modifiedURI, VSBuffer.fromString(this._originalContent));
-		this._multiDiffEntryDelegate.collapse(undefined);
+	}
+
+	protected override _doRejectTransition(tx: ITransaction): void {
+		this._multiDiffEntryDelegate.collapse(tx);
 	}
 
 	protected _createEditorIntegration(_editor: IEditorPane): IModifiedFileEntryEditorIntegration {
@@ -271,4 +277,5 @@ export class ChatEditingDeletedFileEntry extends AbstractChatEditingModifiedFile
 	async revertToDisk(): Promise<void> {
 		// Nothing to revert - file is deleted
 	}
+
 }

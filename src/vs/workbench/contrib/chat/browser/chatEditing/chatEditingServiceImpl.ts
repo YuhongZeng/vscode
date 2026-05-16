@@ -36,7 +36,7 @@ import { ILifecycleService } from '../../../../services/lifecycle/common/lifecyc
 import { IMultiDiffSourceResolver, IMultiDiffSourceResolverService, IResolvedMultiDiffSource, MultiDiffEditorItem } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
 import { CellUri, ICellEditOperation } from '../../../notebook/common/notebookCommon.js';
 import { INotebookService } from '../../../notebook/common/notebookService.js';
-import { CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, chatEditingAgentSupportsReadonlyReferencesContextKey, chatEditingResourceContextKey, ChatEditingSessionState, ChatEditKind, IChatEditingService, IChatEditingSession, IModifiedFileEntry, inChatEditingSessionContextKey, IStreamingEdits, ModifiedFileEntryState, parseChatMultiDiffUri } from '../../common/editing/chatEditingService.js';
+import { CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, chatEditingAgentSupportsReadonlyReferencesContextKey, chatEditingResourceContextKey, ChatEditingSessionState, IChatEditingService, IChatEditingSession, IModifiedFileEntry, inChatEditingSessionContextKey, IStreamingEdits, ModifiedFileEntryState, parseChatMultiDiffUri } from '../../common/editing/chatEditingService.js';
 import { ChatModel, ICellTextEditOperation, IChatResponseModel, isCellTextEditOperationArray } from '../../common/model/chatModel.js';
 import { IChatService } from '../../common/chatService/chatService.js';
 import { ChatEditorInput } from '../widgetHosts/editor/chatEditorInput.js';
@@ -152,6 +152,15 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 	}
 
 	private _lookupEntry(uri: URI): AbstractChatEditingModifiedFileEntry | undefined {
+		for (const session of this._sessionsObs.get()) {
+			const entry = session.getEntry(uri);
+			if (entry) {
+				if (entry.state.get() !== ModifiedFileEntryState.Modified) {
+					continue;
+				}
+				return entry as AbstractChatEditingModifiedFileEntry;
+			}
+		}
 		return undefined;
 	}
 
@@ -477,8 +486,6 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 						undefined,
 						{
 							[chatEditingResourceContextKey.key]: entry.entryId,
-							'chatEditing.isAdded': entry.kind === ChatEditKind.Created,
-							'chatEditing.isDeleted': entry.kind === ChatEditKind.Deleted,
 						},
 						entry.linesAdded?.read(reader),
 						entry.linesRemoved?.read(reader)
@@ -493,8 +500,7 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 				undefined,
 				{
 					[chatEditingResourceContextKey.key]: entry.entryId,
-					'chatEditing.isAdded': entry.kind === ChatEditKind.Created,
-					'chatEditing.isDeleted': entry.kind === ChatEditKind.Deleted,
+					// [inChatEditingSessionContextKey.key]: true
 				},
 				entry.linesAdded?.read(reader),
 				entry.linesRemoved?.read(reader)
