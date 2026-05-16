@@ -4,6 +4,7 @@ npm-debug.log
 Thumbs.db
 node_modules/
 .build/
+.trae/
 .vscode/extensions/**/out/
 extensions/**/dist/
 src/vs/base/browser/ui/codicons/codicon/codicon.ttf
@@ -25,3 +26,4 @@ product.overrides.json
 .vscode-test
 vscode-telemetry-docs/
 test-output.json
+.trae/rules/compile.md
