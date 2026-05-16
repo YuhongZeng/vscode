@@ -1526,6 +1526,11 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 				checkProposedApiEnabled(extension, 'chatParticipantPrivate');
 				return extHostChatEditing.startEditingSession(options);
 			},
+			setEditingEditorVisibility(visible: boolean) {
+				checkProposedApiEnabled(extension, 'chatParticipantPrivate');
+				extHostChatEditing.setEditingEditorVisibility(visible);
+			},
+			get onDidUnclaimedUserAction() { return extHostChatEditing.onDidUnclaimedUserAction; },
 			registerMappedEditsProvider(_selector: vscode.DocumentSelector, _provider: vscode.MappedEditsProvider) {
 				checkProposedApiEnabled(extension, 'mappedEditsProvider');
 				// no longer supported

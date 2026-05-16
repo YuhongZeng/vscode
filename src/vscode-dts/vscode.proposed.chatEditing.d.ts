@@ -115,8 +115,21 @@ declare module 'vscode' {
 		}
 
 		/**
+		 * Fired when a user action happens on a session that has not yet been claimed by the extension.
+		 */
+		// eslint-disable-next-line local/vscode-dts-event-naming
+		export const onDidUnclaimedUserAction: Event<{ readonly chatSessionId: string }>;
+
+		/**
 		 * Start a new editing session.
 		 */
 		export function startEditingSession(options?: ChatEditingSessionOptions): Thenable<ChatEditingSession>;
+
+		/**
+		 * Controls the visibility of chat editing diffs in the editor.
+		 * Diffs are hidden by default to prevent flashing before the extension is fully activated.
+		 * @param visible Whether the editor diffs should be visible.
+		 */
+		export function setEditingEditorVisibility(visible: boolean): void;
 	}
 }

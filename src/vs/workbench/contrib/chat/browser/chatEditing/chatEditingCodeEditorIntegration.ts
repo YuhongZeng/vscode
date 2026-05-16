@@ -880,6 +880,10 @@ class DiffHunkWidget implements IOverlayWidget, IModifiedFileEntryChangeHunk {
 
 	// ---
 
+	get change(): DetailedLineRangeMapping {
+		return this._change;
+	}
+
 	async reject(): Promise<boolean> {
 		if (this._versionId !== this._editor.getModel()?.getVersionId()) {
 			return false;

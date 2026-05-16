@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { Emitter } from '../../../base/common/event.js';
+import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { URI, UriComponents } from '../../../base/common/uri.js';
 import { ExtHostChatEditingShape, MainContext, MainThreadChatEditingShape } from './extHost.protocol.js';
@@ -16,8 +16,23 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange = this._onDidChange.event;
 
+	private readonly _pendingActions: vscode.chat.ChatEditingSessionAction[] = [];
 	private readonly _onDidUserAction = this._register(new Emitter<vscode.chat.ChatEditingSessionAction>());
-	readonly onDidUserAction = this._onDidUserAction.event;
+
+	get onDidUserAction(): Event<vscode.chat.ChatEditingSessionAction> {
+		return (listener, thisArgs, disposables) => {
+			const result = this._onDidUserAction.event(listener, thisArgs, disposables);
+			if (this._pendingActions.length > 0) {
+				queueMicrotask(() => {
+					for (const action of this._pendingActions) {
+						listener.call(thisArgs, action);
+					}
+					this._pendingActions.length = 0;
+				});
+			}
+			return result;
+		};
+	}
 
 	private readonly _onDidDispose = this._register(new Emitter<void>());
 	readonly onDidDispose = this._onDidDispose.event;
@@ -83,7 +98,7 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 	}
 
 	fireUserAction(action: { type: number; uri: UriComponents; isFromApi?: boolean; file: { uri: UriComponents; state: number; kind: number; added: number; removed: number } }) {
-		this._onDidUserAction.fire({
+		const payload = {
 			type: action.type as vscode.chat.ChatEditingSessionUserAction,
 			uri: URI.revive(action.uri),
 			isFromApi: action.isFromApi,
@@ -94,7 +109,13 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 				added: action.file.added,
 				removed: action.file.removed
 			}
-		});
+		};
+
+		if (this._onDidUserAction.hasListeners()) {
+			this._onDidUserAction.fire(payload);
+		} else {
+			this._pendingActions.push(payload);
+		}
 	}
 
 	override dispose() {
@@ -104,17 +125,45 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 	}
 }
 
-export class ExtHostChatEditing implements ExtHostChatEditingShape {
+export interface IExtHostChatEditing extends ExtHostChatEditingShape {
+	startEditingSession(options?: vscode.chat.ChatEditingSessionOptions): Promise<vscode.chat.ChatEditingSession>;
+	setEditingEditorVisibility(visible: boolean): void;
+	readonly onDidUnclaimedUserAction: Event<{ readonly chatSessionId: string }>;
+}
+
+export class ExtHostChatEditing implements IExtHostChatEditing {
 
 	private readonly _proxy: MainThreadChatEditingShape;
 	private readonly _sessions = new Map<number, ChatEditingSession>();
 	private _nextHandle = 1;
 
-	constructor(extHostRpc: IExtHostRpcService) {
+	private readonly _unclaimedSessionIds = new Set<string>();
+	private readonly _onDidUnclaimedUserAction = new Emitter<{ readonly chatSessionId: string }>();
+
+	get onDidUnclaimedUserAction(): Event<{ readonly chatSessionId: string }> {
+		return (listener, thisArgs, disposables) => {
+			const result = this._onDidUnclaimedUserAction.event(listener, thisArgs, disposables);
+			if (this._unclaimedSessionIds.size > 0) {
+				queueMicrotask(() => {
+					for (const chatSessionId of this._unclaimedSessionIds) {
+						listener.call(thisArgs, { chatSessionId });
+					}
+				});
+			}
+			return result;
+		};
+	}
+
+	constructor(
+		extHostRpc: IExtHostRpcService
+	) {
 		this._proxy = extHostRpc.getProxy(MainContext.MainThreadChatEditing);
 	}
 
 	startEditingSession(options?: vscode.chat.ChatEditingSessionOptions): Promise<vscode.chat.ChatEditingSession> {
+		if (options?.chatSessionId) {
+			this._unclaimedSessionIds.delete(options.chatSessionId);
+		}
 		const handle = this._nextHandle++;
 		const session = new ChatEditingSession(handle, this._proxy);
 		this._sessions.set(handle, session);
@@ -124,6 +173,10 @@ export class ExtHostChatEditing implements ExtHostChatEditingShape {
 			session._init(id);
 			return session;
 		});
+	}
+
+	setEditingEditorVisibility(visible: boolean): void {
+		this._proxy.$setEditingEditorVisibility(visible);
 	}
 
 	async $accept(handle: number): Promise<void> {
@@ -136,6 +189,11 @@ export class ExtHostChatEditing implements ExtHostChatEditingShape {
 
 	$onDidUserAction(handle: number, action: { type: number; uri: UriComponents; isFromApi?: boolean; file: { uri: UriComponents; state: number; kind: number; added: number; removed: number } }): void {
 		this._sessions.get(handle)?.fireUserAction(action);
+	}
+
+	$onDidUnclaimedUserAction(chatSessionId: string): void {
+		this._unclaimedSessionIds.add(chatSessionId);
+		this._onDidUnclaimedUserAction.fire({ chatSessionId });
 	}
 
 	async $onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; kind: number; added: number; removed: number }[]): Promise<void> {

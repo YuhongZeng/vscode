@@ -452,7 +452,15 @@ export class InlineChatSessionOverlayWidget extends Disposable {
 					return undefined; // use default action view item with label
 				}
 
-				return new ChatEditingAcceptRejectActionViewItem(action, options, entry, undefined, that._keybindingService, primaryActions);
+				const activeDataObs = derived(r => {
+					const e = entry.read(r);
+					if (e) {
+						// Map single entry to the activeData format required by ChatEditingAcceptRejectActionViewItem
+						return [{ session: session as unknown as import('../../chat/common/editing/chatEditingService.js').IChatEditingSession, entry: e }];
+					}
+					return undefined;
+				});
+				return new ChatEditingAcceptRejectActionViewItem(action, options, activeDataObs, undefined, that._keybindingService, primaryActions);
 			}
 		}));
 

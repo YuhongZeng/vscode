@@ -660,7 +660,6 @@ class ChatEditingNotebookEditorWidgetIntegration extends Disposable implements I
 			this._currentIndex.set(this._currentIndex.get() - 1, undefined);
 			this.next(true);
 		}
-
 	}
 	async toggleDiff(_change: IModifiedFileEntryChangeHunk | undefined, _show?: boolean): Promise<void> {
 		const diffInput: IResourceDiffEditorInput = {

@@ -16,6 +16,9 @@ import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contex
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { IListService } from '../../../../../platform/list/browser/listService.js';
+import { AccessibilitySignal, IAccessibilitySignalService } from '../../../../../platform/accessibilitySignal/browser/accessibilitySignalService.js';
+import { Range } from '../../../../../editor/common/core/range.js';
+import { Position } from '../../../../../editor/common/core/position.js';
 import { resolveCommandsContext } from '../../../../browser/parts/editor/editorCommandsContext.js';
 import { ActiveEditorContext } from '../../../../common/contextkeys.js';
 import { EditorResourceAccessor, SideBySideEditor, TEXT_DIFF_EDITOR_ID } from '../../../../common/editor.js';
@@ -66,12 +69,14 @@ abstract class ChatEditingEditorAction extends Action2 {
 			return;
 		}
 
-		const session = chatEditingService.editingSessionsObs.get()
-			.find(candidate => candidate.getEntry(uri));
+		const sessions = chatEditingService.editingSessionsObs.get()
+			.filter(candidate => candidate.getEntry(uri));
 
-		if (!session) {
+		if (sessions.length === 0) {
 			return;
 		}
+
+		const session = sessions[0];
 
 		const entry = session.getEntry(uri)!;
 		const ctrl = entry.getEditorIntegration(editorService.activeEditorPane);
@@ -114,12 +119,85 @@ abstract class NavigateAction extends ChatEditingEditorAction {
 		});
 	}
 
-	override async runChatEditingCommand(accessor: ServicesAccessor, session: IChatEditingSession, entry: IModifiedFileEntry, ctrl: IModifiedFileEntryEditorIntegration): Promise<void> {
+	override async run(accessor: ServicesAccessor, ...args: unknown[]) {
+		const chatEditingService = accessor.get(IChatEditingService);
+		const editorService = accessor.get(IEditorService);
+		const accessibilitySignalService = accessor.get(IAccessibilitySignalService);
 
-		// wrap inside the same file
-		this.next
-			? ctrl.next(true)
-			: ctrl.previous(true);
+		const activeEditorPane = editorService.activeEditorPane;
+		const uri = EditorResourceAccessor.getOriginalUri(activeEditorPane?.input, { supportSideBySide: SideBySideEditor.PRIMARY });
+
+		if (!uri || !activeEditorPane) {
+			return;
+		}
+
+		const sessions = chatEditingService.editingSessionsObs.get()
+			.filter(candidate => candidate.isGlobalEditingSession && candidate.getEntry(uri)?.state.get() === ModifiedFileEntryState.Modified);
+
+		if (sessions.length === 0) {
+			return;
+		}
+
+		const codeEditor = activeEditorPane.getControl() as ICodeEditor;
+		if (!codeEditor || typeof codeEditor.getPosition !== 'function') {
+			return;
+		}
+
+		const position = codeEditor.getPosition();
+		if (!position) {
+			return;
+		}
+
+		const ranges: Range[] = [];
+		const session = sessions[0];
+		const entry = session.getEntry(uri)!;
+		const diffInfo = await entry.getDiffInfo?.();
+		if (diffInfo) {
+			for (const change of diffInfo.changes) {
+				const range = change.modified.isEmpty
+					? new Range(change.modified.startLineNumber - 1, 1, change.modified.startLineNumber, 1)
+					: change.modified.toInclusiveRange();
+				if (range) {
+					ranges.push(range);
+				}
+			}
+		}
+
+		if (ranges.length === 0) {
+			return;
+		}
+
+		ranges.sort(Range.compareRangesUsingStarts);
+
+		let newIndex = -1;
+		for (let i = 0; i < ranges.length; i++) {
+			const range = ranges[i];
+			if (range.containsPosition(position)) {
+				newIndex = i + (this.next ? 1 : -1);
+				break;
+			} else if (Position.isBefore(position, range.getStartPosition())) {
+				newIndex = this.next ? i : i - 1;
+				break;
+			}
+		}
+
+		if (newIndex < 0) {
+			newIndex = ranges.length - 1;
+		} else if (newIndex >= ranges.length) {
+			newIndex = 0;
+		}
+
+		const targetRange = ranges[newIndex];
+		if (targetRange) {
+			codeEditor.setPosition(targetRange.getStartPosition());
+			codeEditor.revealRangeInCenter(targetRange);
+			codeEditor.focus();
+			accessibilitySignalService.playSignal(AccessibilitySignal.chatEditNavigated);
+		}
+	}
+
+	override async runChatEditingCommand(accessor: ServicesAccessor, session: IChatEditingSession, entry: IModifiedFileEntry, ctrl: IModifiedFileEntryEditorIntegration): Promise<void> {
+		// No-op as run is overridden
 	}
 }
 
@@ -164,19 +242,50 @@ abstract class NavigateFileAction extends ChatEditingEditorAction {
 async function openNextOrPreviousChange(accessor: ServicesAccessor, session: IChatEditingSession, entry: IModifiedFileEntry, next: boolean) {
 
 	const editorService = accessor.get(IEditorService);
+	const chatEditingService = accessor.get(IChatEditingService);
 
-	const entries = session.entries.get();
-	let idx = entries.indexOf(entry);
+	// 1. Gather all global sessions
+	const globalSessions = chatEditingService.editingSessionsObs.get()
+		.filter(s => s.isGlobalEditingSession);
 
-	let newEntry: IModifiedFileEntry;
-	while (true) {
-		idx = (idx + (next ? 1 : -1) + entries.length) % entries.length;
-		newEntry = entries[idx];
-		if (newEntry.state.get() === ModifiedFileEntryState.Modified) {
-			break;
-		} else if (newEntry === entry) {
-			return false;
+	// 2. Aggregate all entries.
+	const entriesByUri = new Map<string, IModifiedFileEntry>();
+
+	for (const s of globalSessions) {
+		for (const e of s.entries.get()) {
+			const uriStr = e.modifiedURI.toString();
+			const existing = entriesByUri.get(uriStr);
+			if (!existing) {
+				entriesByUri.set(uriStr, e);
+			}
 		}
+	}
+
+	const allEntries = Array.from(entriesByUri.values()).sort((a, b) => a.modifiedURI.toString().localeCompare(b.modifiedURI.toString()));
+
+	if (allEntries.length === 0) {
+		return false;
+	}
+
+	let idx = allEntries.findIndex(e => e.modifiedURI.toString() === entry.modifiedURI.toString());
+	if (idx === -1) {
+		idx = 0;
+	}
+
+	let newEntry: IModifiedFileEntry | undefined;
+	let attempts = 0;
+	while (attempts < allEntries.length) {
+		idx = (idx + (next ? 1 : -1) + allEntries.length) % allEntries.length;
+		const candidate = allEntries[idx];
+		if (candidate.state.get() === ModifiedFileEntryState.Modified) {
+			newEntry = candidate;
+			break;
+		}
+		attempts++;
+	}
+
+	if (!newEntry || (newEntry === entry && newEntry.state.get() !== ModifiedFileEntryState.Modified)) {
+		return false;
 	}
 
 	const pane = await editorService.openEditor({
@@ -191,10 +300,7 @@ async function openNextOrPreviousChange(accessor: ServicesAccessor, session: ICh
 		return false;
 	}
 
-	if (session.entries.get().includes(newEntry)) {
-		// make sure newEntry is still valid!
-		newEntry.getEditorIntegration(pane).reveal(next);
-	}
+	newEntry.getEditorIntegration(pane).reveal(next);
 
 	return true;
 }
@@ -234,17 +340,42 @@ abstract class KeepOrUndoAction extends ChatEditingEditorAction {
 		});
 	}
 
-	override async runChatEditingCommand(accessor: ServicesAccessor, session: IChatEditingSession, entry: IModifiedFileEntry, _integration: IModifiedFileEntryEditorIntegration): Promise<void> {
-
+	override async run(accessor: ServicesAccessor, ...args: unknown[]) {
+		const chatEditingService = accessor.get(IChatEditingService);
+		const editorService = accessor.get(IEditorService);
 		const instaService = accessor.get(IInstantiationService);
 
-		if (this._keep) {
-			session.accept(entry.modifiedURI);
-		} else {
-			session.reject(entry.modifiedURI);
+		const uri = EditorResourceAccessor.getOriginalUri(editorService.activeEditorPane?.input, { supportSideBySide: SideBySideEditor.PRIMARY });
+
+		if (!uri || !editorService.activeEditorPane) {
+			return;
 		}
 
-		await instaService.invokeFunction(openNextOrPreviousChange, session, entry, true);
+		const sessions = chatEditingService.editingSessionsObs.get()
+			.filter(candidate => candidate.getEntry(uri));
+
+		if (sessions.length === 0) {
+			return;
+		}
+
+		for (const session of sessions) {
+			if (this._keep) {
+				session.accept(uri);
+			} else {
+				session.reject(uri);
+			}
+		}
+
+		// Navigate to the next change using the first available session
+		const firstSession = sessions[0];
+		const firstEntry = firstSession.getEntry(uri);
+		if (firstEntry) {
+			await instaService.invokeFunction(openNextOrPreviousChange, firstSession, firstEntry, true);
+		}
+	}
+
+	override async runChatEditingCommand(accessor: ServicesAccessor, session: IChatEditingSession, entry: IModifiedFileEntry, _integration: IModifiedFileEntryEditorIntegration): Promise<void> {
+		// No-op as run is overridden
 	}
 }
 
@@ -296,11 +427,12 @@ abstract class AcceptRejectHunkAction extends ChatEditingEditorAction {
 	override async runChatEditingCommand(accessor: ServicesAccessor, session: IChatEditingSession, entry: IModifiedFileEntry, ctrl: IModifiedFileEntryEditorIntegration, ...args: unknown[]): Promise<void> {
 
 		const instaService = accessor.get(IInstantiationService);
+		const hunk = args[0] as IModifiedFileEntryChangeHunk | undefined;
 
 		if (this._accept) {
-			await ctrl.acceptNearestChange(args[0] as IModifiedFileEntryChangeHunk | undefined);
+			await ctrl.acceptNearestChange(hunk);
 		} else {
-			await ctrl.rejectNearestChange(args[0] as IModifiedFileEntryChangeHunk | undefined);
+			await ctrl.rejectNearestChange(hunk);
 		}
 
 		if (entry.changesCount.get() === 0) {

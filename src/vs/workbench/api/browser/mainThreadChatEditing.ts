@@ -6,10 +6,9 @@
 import { combinedDisposable, Disposable, DisposableMap, IDisposable } from '../../../base/common/lifecycle.js';
 import { autorun } from '../../../base/common/observable.js';
 import { RunOnceScheduler } from '../../../base/common/async.js';
-import { Iterable } from '../../../base/common/iterator.js';
 import { ExtHostChatEditingShape, ExtHostContext, IApplyEditsResultDto, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
-import { IChatEditingService, IChatEditingSession, IModifiedFileEntry } from '../../contrib/chat/common/editing/chatEditingService.js';
+import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../contrib/chat/common/chatService/chatService.js';
 import { ITextFileService } from '../../services/textfile/common/textfiles.js';
 import { IFilesConfigurationService } from '../../services/filesConfiguration/common/filesConfigurationService.js';
@@ -18,6 +17,7 @@ import { reviveWorkspaceEditDto } from './mainThreadBulkEdits.js';
 import { ChatModel } from '../../contrib/chat/common/model/chatModel.js';
 import { ChatAgentLocation } from '../../contrib/chat/common/constants.js';
 import { IUriIdentityService } from '../../../platform/uriIdentity/common/uriIdentity.js';
+import { IExtensionService } from '../../services/extensions/common/extensions.js';
 import { ChatRequestTextPart } from '../../contrib/chat/common/requestParser/chatParserTypes.js';
 import { OffsetRange } from '../../../editor/common/core/ranges/offsetRange.js';
 import { Range } from '../../../editor/common/core/range.js';
@@ -30,6 +30,7 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 	private readonly _proxy: ExtHostChatEditingShape;
 	private readonly _sessions = this._register(new DisposableMap<number, IChatEditingSession>());
 	private readonly _sessionDisposables = this._register(new DisposableMap<number, IDisposable>());
+	private readonly _unclaimedActions = new Map<string, { type: number; uri: UriComponents; isFromApi?: boolean; file: { uri: UriComponents; state: number; kind: number; added: number; removed: number } }[]>();
 
 	constructor(
 		extHostContext: IExtHostContext,
@@ -37,42 +38,67 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		@IChatService private readonly _chatService: IChatService,
 		@IUriIdentityService private readonly _uriIdentityService: IUriIdentityService,
 		@ITextFileService private readonly _textFileService: ITextFileService,
-		@IFilesConfigurationService private readonly _filesConfigurationService: IFilesConfigurationService
+		@IFilesConfigurationService private readonly _filesConfigurationService: IFilesConfigurationService,
+		@IExtensionService private readonly _extensionService: IExtensionService
 	) {
 		super();
 		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostChatEditing);
 
 		this._register(this._chatService.onDidPerformUserAction(e => {
 			if (e.action.kind === 'chatEditingSessionAction' || e.action.kind === 'chatEditingHunkAction') {
-				const session = Iterable.find(this._sessions.values(), s => s.chatSessionResource.toString() === e.sessionResource.toString());
-				if (session) {
-					// find handle
+
+				const actionUri = e.action.uri;
+				const allGlobalSessions = this._chatEditingService.editingSessionsObs.get();
+				const relatedSessions = allGlobalSessions.filter(s => s.getEntry(actionUri));
+
+				for (const globalSession of relatedSessions) {
+					const entry = globalSession.getEntry(actionUri);
+					if (!entry) {
+						continue;
+					}
+
+					let type: number;
+					if (e.action.kind === 'chatEditingSessionAction') {
+						type = e.action.outcome === 'accepted' ? 1 /* FileAccepted */ : 2 /* FileRejected */;
+					} else {
+						type = e.action.outcome === 'accepted' ? 3 /* HunkAccepted */ : 4 /* HunkRejected */;
+					}
+
+					const state = entry.state.get();
+					const isModified = state === ModifiedFileEntryState.Modified;
+					const fileInfo = {
+						uri: entry.modifiedURI,
+						state,
+						kind: entry.kind,
+						added: isModified ? (entry.linesAdded?.get() ?? 0) : 0,
+						removed: isModified ? (entry.linesRemoved?.get() ?? 0) : 0
+					};
+					const actionPayload = { type, uri: actionUri, isFromApi: e.action.kind === 'chatEditingSessionAction' ? e.action.isFromApi : false, file: fileInfo };
+
+					// Check if this globalSession is claimed
 					let handle: number | undefined;
 					for (const [h, s] of this._sessions) {
-						if (s === session) {
+						if (s.chatSessionResource.toString() === globalSession.chatSessionResource.toString()) {
 							handle = h;
 							break;
 						}
 					}
-					if (handle !== undefined) {
-						let type: number;
-						if (e.action.kind === 'chatEditingSessionAction') {
-							type = e.action.outcome === 'accepted' ? 1 /* FileAccepted */ : 2 /* FileRejected */;
-						} else {
-							type = e.action.outcome === 'accepted' ? 3 /* HunkAccepted */ : 4 /* HunkRejected */;
-						}
 
-						const entry = session.getEntry(e.action.uri);
-						if (entry) {
-							const fileInfo = {
-								uri: entry.modifiedURI,
-								state: entry.state.get(),
-								kind: entry.kind,
-								added: entry.linesAdded?.get() ?? 0,
-								removed: entry.linesRemoved?.get() ?? 0
-							};
-							this._proxy.$onDidUserAction(handle, { type, uri: e.action.uri, isFromApi: e.action.kind === 'chatEditingSessionAction' ? e.action.isFromApi : false, file: fileInfo });
+					if (handle !== undefined) {
+						// Claimed session
+						this._proxy.$onDidUserAction(handle, actionPayload);
+					} else {
+						// Unclaimed session
+						const chatSessionId = globalSession.chatSessionResource.toString();
+						let actions = this._unclaimedActions.get(chatSessionId);
+						if (!actions) {
+							actions = [];
+							this._unclaimedActions.set(chatSessionId, actions);
 						}
+						actions.push(actionPayload);
+						this._proxy.$onDidUnclaimedUserAction(chatSessionId);
+						this._extensionService.activateByEvent(`onChatEditingSession:${chatSessionId}`);
+						this._extensionService.activateByEvent(`onChatEditingSession`);
 					}
 				}
 			}
@@ -101,12 +127,22 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		}
 
 		// Ensure we are working with the concrete class to access methods if needed, though interface should suffice for creation
-		const session = this._chatEditingService.createEditingSession(chatModel);
+		const session = this._chatEditingService.startOrContinueGlobalEditingSession(chatModel);
 		this._sessions.set(handle, session);
+
+		const chatSessionIdStr = session.chatSessionResource.toString();
+		const pendingActions = this._unclaimedActions.get(chatSessionIdStr);
+		if (pendingActions) {
+			for (const action of pendingActions) {
+				this._proxy.$onDidUserAction(handle, action);
+			}
+			this._unclaimedActions.delete(chatSessionIdStr);
+		}
 
 		const updateScheduler = new RunOnceScheduler(() => {
 			const entries = session.entries.get();
 			const files = entries
+				.filter(entry => entry.state.get() === ModifiedFileEntryState.Modified)
 				.map(entry => ({
 					uri: entry.modifiedURI,
 					state: entry.state.get(),
@@ -333,8 +369,12 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 	async $show(handle: number, title?: string): Promise<void> {
 		const session = this._sessions.get(handle);
 		if (session) {
-			await session.show(false, title);
+			await session.show(undefined, title);
 		}
+	}
+
+	async $setEditingEditorVisibility(visible: boolean): Promise<void> {
+		this._chatEditingService.setEditingEditorVisibility(visible);
 	}
 
 	private _findEntry(uri: UriComponents, entries: readonly IModifiedFileEntry[]): IModifiedFileEntry | undefined {

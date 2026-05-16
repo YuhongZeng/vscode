@@ -5,6 +5,7 @@
 
 import './media/chatEditingEditorOverlay.css';
 import { combinedDisposable, Disposable, DisposableMap, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { ResourceSet } from '../../../../../base/common/map.js';
 import { autorun, derived, derivedOpts, IObservable, observableFromEvent, observableSignalFromEvent, observableValue, transaction } from '../../../../../base/common/observable.js';
 import { HiddenItemStrategy, MenuWorkbenchToolBar } from '../../../../../platform/actions/browser/toolbar.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -64,7 +65,16 @@ export class ChatEditingAcceptRejectActionViewItem extends ActionViewItem {
 				assertType(this.element);
 
 				const data = this._activeData!.read(r);
-				const ctrl = data?.[0]?.entry.autoAcceptController.read(r);
+
+				// Find the controller with the maximum remaining time
+				let maxCtrl = undefined;
+				for (const d of (data || [])) {
+					const ctrl = d.entry.autoAcceptController.read(r);
+					if (ctrl && (!maxCtrl || ctrl.remaining > maxCtrl.remaining)) {
+						maxCtrl = ctrl;
+					}
+				}
+				const ctrl = maxCtrl;
 				if (ctrl) {
 
 					const ratio = -100 * (ctrl.remaining / ctrl.total);
@@ -201,8 +211,12 @@ export class ChatEditorOverlayWidget extends Disposable {
 
 			// Aggregate change count across all entries
 			let changeCount = 0;
+			const seenUris = new ResourceSet();
 			for (const { entry } of data) {
-				changeCount += entry.changesCount.read(r);
+				if (!seenUris.has(entry.modifiedURI)) {
+					seenUris.add(entry.modifiedURI);
+					changeCount += entry.changesCount.read(r);
+				}
 			}
 
 			this._navigationBearings.set({ changeCount, activeIdx, entriesCount, activeEntryIdx }, undefined);
@@ -477,10 +491,9 @@ class ChatEditingOverlayController {
 				assertType(editorPane);
 
 				// Initialize editor integrations so that change block UIs are rendered
-				for (const { entry } of data) {
-					if (entry.state.read(r) === ModifiedFileEntryState.Modified) {
-						entry.getEditorIntegration(editorPane);
-					}
+				const firstModified = data.find(d => d.entry.state.read(r) === ModifiedFileEntryState.Modified);
+				if (firstModified) {
+					firstModified.entry.getEditorIntegration(editorPane);
 				}
 
 				const changeIndex = derived(r => {
@@ -490,10 +503,16 @@ class ChatEditingOverlayController {
 					}
 
 					const allChanges: { range: Range }[] = [];
+					const seenUris = new ResourceSet();
 					for (const { entry } of data) {
 						if (entry.state.read(r) !== ModifiedFileEntryState.Modified) {
 							continue;
 						}
+						if (seenUris.has(entry.modifiedURI)) {
+							continue;
+						}
+						seenUris.add(entry.modifiedURI);
+
 						const diff = entry.diffInfo?.read(r);
 						if (diff) {
 							for (const change of diff.changes) {

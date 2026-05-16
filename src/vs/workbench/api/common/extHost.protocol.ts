@@ -3407,6 +3407,7 @@ export interface MainThreadChatEditingShape extends IDisposable {
 	$accept(handle: number, uris?: UriComponents[]): Promise<void>;
 	$reject(handle: number, uris?: UriComponents[]): Promise<void>;
 	$show(handle: number, title?: string): Promise<void>;
+	$setEditingEditorVisibility(visible: boolean): Promise<void>;
 	$disposeEditingSession(handle: number): Promise<void>;
 }
 
@@ -3415,6 +3416,7 @@ export interface ExtHostChatEditingShape {
 	$reject(handle: number): Promise<void>;
 	$onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; kind: number; added: number; removed: number }[]): Promise<void>;
 	$onDidUserAction(handle: number, action: { type: number; uri: UriComponents; isFromApi?: boolean; file: { uri: UriComponents; state: number; kind: number; added: number; removed: number } }): void;
+	$onDidUnclaimedUserAction(chatSessionId: string): void;
 }
 
 export interface ExtHostChatSessionsShape {
