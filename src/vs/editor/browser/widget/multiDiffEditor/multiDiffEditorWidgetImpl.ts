@@ -226,10 +226,7 @@ export class MultiDiffEditorWidgetImpl extends Disposable {
 
 		this._register(autorun((reader) => {
 			/** @description Update scroll dimensions */
-			let height = this._sizeObserver.height.read(reader);
-			if (this._elements.globalHeader.style.display !== 'none') {
-				height -= this._elements.globalHeader.offsetHeight;
-			}
+			const height = this._sizeObserver.height.read(reader);
 			this._scrollableElements.root.style.height = `${height}px`;
 			const totalHeight = this._totalHeight.read(reader);
 			this._scrollableElements.content.style.height = `${totalHeight}px`;
@@ -262,10 +259,6 @@ export class MultiDiffEditorWidgetImpl extends Disposable {
 			/** @description Initialize first change */
 			const viewModel = this._viewModel.read(reader);
 			if (!viewModel) {
-				return;
-			}
-
-			if (viewModel.contextKeys?.['inChatEditingSession']) {
 				return;
 			}
 
@@ -465,10 +458,7 @@ export class MultiDiffEditorWidgetImpl extends Disposable {
 		let contentScrollOffsetToScrollOffset = 0;
 		let itemHeightSumBefore = 0;
 		let itemContentHeightSumBefore = 0;
-		let viewPortHeight = this._sizeObserver.height.read(reader);
-		if (this._elements.globalHeader.style.display !== 'none') {
-			viewPortHeight -= this._elements.globalHeader.offsetHeight;
-		}
+		const viewPortHeight = this._sizeObserver.height.read(reader);
 		const contentViewPort = OffsetRange.ofStartAndLength(scrollTop, viewPortHeight);
 
 		const width = this._sizeObserver.width.read(reader);
@@ -535,16 +525,9 @@ export type IMultiDiffResourceId = { original: URI | undefined; modified: URI | 
 class VirtualizedViewItem extends Disposable {
 	private readonly _templateRef = this._register(disposableObservableValue<IReference<DiffEditorItemTemplate> | undefined>(this, undefined));
 
-	public readonly contentHeight = derived(this, reader => {
-		const template = this._templateRef.read(reader)?.object;
-		if (template) {
-			return template.contentHeight.read(reader);
-		}
-		if (this.viewModel.collapsed.read(reader)) {
-			return 52; // outerEditorHeight
-		}
-		return this.viewModel.lastTemplateData.read(reader).contentHeight;
-	});
+	public readonly contentHeight = derived(this, reader =>
+		this._templateRef.read(reader)?.object.contentHeight?.read(reader) ?? this.viewModel.lastTemplateData.read(reader).contentHeight
+	);
 
 	public readonly maxScroll = derived(this, reader => this._templateRef.read(reader)?.object.maxScroll.read(reader) ?? { maxScroll: 0, scrollWidth: 0 });
 

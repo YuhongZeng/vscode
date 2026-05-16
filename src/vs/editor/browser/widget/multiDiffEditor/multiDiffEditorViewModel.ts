@@ -90,7 +90,7 @@ export class DocumentDiffItemViewModel extends Disposable {
 	public get diffEditorViewModel(): IDiffEditorViewModel {
 		return this.diffEditorViewModelRef.object;
 	}
-	public readonly collapsed = observableValue<boolean>(this, !!this._editorViewModel.contextKeys?.['inChatEditingSession']);
+	public readonly collapsed = observableValue<boolean>(this, false);
 
 	public readonly lastTemplateData = observableValue<{ contentHeight: number; selections: Selection[] | undefined }>(
 		this,

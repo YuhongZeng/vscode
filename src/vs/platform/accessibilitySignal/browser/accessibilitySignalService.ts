@@ -587,6 +587,13 @@ export class AccessibilitySignal {
 		settingsKey: 'accessibility.signals.chatEditModifiedFile',
 	});
 
+	public static readonly chatEditNavigated = AccessibilitySignal.register({
+		name: localize('accessibilitySignals.chatEditNavigated', 'Chat Edit Navigated'),
+		sound: Sound.chatEditModifiedFile,
+		announcementMessage: localize('accessibility.signals.chatEditNavigated', 'Chat Edit Navigated'),
+		settingsKey: 'accessibility.signals.chatEditNavigated',
+	});
+
 	public static readonly chatRequestSent = AccessibilitySignal.register({
 		name: localize('accessibilitySignals.chatRequestSent', 'Chat Request Sent'),
 		sound: Sound.requestSent,

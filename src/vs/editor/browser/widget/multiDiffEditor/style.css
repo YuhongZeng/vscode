@@ -132,20 +132,6 @@
 			border-bottom: none;
 		}
 
-		&.is-added .line-delete,
-		&.is-added .char-delete,
-		&.is-added .gutter-delete,
-		&.is-added .inline-deleted-margin-view-zone,
-		&.is-added .diff-range-empty {
-			background: transparent !important;
-			background-color: transparent !important;
-			border-left: none !important;
-		}
-
-		&.is-added .delete-sign {
-			opacity: 0 !important;
-		}
-
 		.header {
 			z-index: 1000;
 			background: var(--vscode-multiDiffEditor-headerBackground);
