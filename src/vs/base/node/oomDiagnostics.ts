@@ -5,8 +5,9 @@
 
 import * as fs from 'fs';
 import * as os from 'os';
-import * as path from 'path';
-import * as v8 from 'v8';
+import * as path from '../common/path.js';
+// eslint-disable-next-line local/code-import-patterns
+import * as v8 from 'node:v8';
 import { createRequire } from 'node:module';
 import { OOMDiagnosticMonitor as CommonMonitor } from '../common/oomDiagnostics.js';
 

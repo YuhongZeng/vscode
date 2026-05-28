@@ -12,6 +12,7 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { IUndoRedoService } from '../../../../platform/undoRedo/common/undoRedo.js';
 import { IPathService } from '../../path/common/pathService.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { ILanguageConfigurationService } from '../../../../editor/common/languages/languageConfigurationRegistry.js';
 
 export class WorkbenchModelService extends ModelService {
 	constructor(
@@ -20,8 +21,9 @@ export class WorkbenchModelService extends ModelService {
 		@IUndoRedoService undoRedoService: IUndoRedoService,
 		@IPathService private readonly _pathService: IPathService,
 		@IInstantiationService instantiationService: IInstantiationService,
+		@ILanguageConfigurationService languageConfigurationService: ILanguageConfigurationService
 	) {
-		super(configurationService, resourcePropertiesService, undoRedoService, instantiationService);
+		super(configurationService, resourcePropertiesService, undoRedoService, instantiationService, languageConfigurationService);
 	}
 
 	protected override _schemaShouldMaintainUndoRedoElements(resource: URI) {

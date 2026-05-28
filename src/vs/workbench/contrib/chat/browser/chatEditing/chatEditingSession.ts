@@ -235,11 +235,13 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 					}
 
 					const currentEntries = this._entriesObs.read(undefined);
-					const entriesToKeep = currentEntries.filter(e => !completedEntries.includes(e));
+					const completedSet = new Set(completedEntries);
+					const entriesToKeep = currentEntries.filter(e => !completedSet.has(e));
 
 					if (entriesToKeep.length !== currentEntries.length) {
 						this._entriesObs.set(entriesToKeep, undefined);
 						for (const entry of completedEntries) {
+							this._initialFileContents.delete(entry.modifiedURI);
 							entry.dispose();
 						}
 					}
@@ -403,7 +405,11 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		}
 
 		const contentStr = typeof content === 'string' ? content : content.toString();
-		const model = this._modelService.createModel(contentStr, this._languageService.createByFilepathOrFirstLine(snapshotUri), snapshotUri, false);
+		const model = this._modelService.createModel(contentStr, null, snapshotUri, false);
+		const guessedLanguage = this._languageService.guessLanguageIdByFilepathOrFirstLine(snapshotUri);
+		if (guessedLanguage) {
+			model.setLanguage(guessedLanguage);
+		}
 
 		const store = new DisposableStore();
 		store.add(model.onWillDispose(() => store.dispose()));
@@ -457,11 +463,20 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 
 		// Perform all I/O operations in parallel, each resolving to a state transition callback
 		const method = action === 'accept' ? 'acceptDeferred' : 'rejectDeferred';
-		const transitionCallbacks = await Promise.all(
-			applicableEntries.map(entry => entry[method]({ isFromApi: this.isAcceptingFromApi }).catch(err => {
-				this._logService.error(`Error calling ${method} on entry ${entry.modifiedURI}`, err);
-			}))
-		);
+		const transitionCallbacks: (void | ((tx: ITransaction) => void) | undefined)[] = [];
+		const isBulk = applicableEntries.length > 1;
+		for (let i = 0; i < applicableEntries.length; i += 5) {
+			if (i > 0) {
+				await timeout(0);
+			}
+			const chunk = applicableEntries.slice(i, i + 5);
+			const callbacks = await Promise.all(
+				chunk.map(entry => entry[method]({ isFromApi: this.isAcceptingFromApi, isBulk }).catch(err => {
+					this._logService.error(`Error calling ${method} on entry ${entry.modifiedURI}`, err);
+				}))
+			);
+			transitionCallbacks.push(...callbacks);
+		}
 
 		// Execute all state transitions atomically in a single transaction
 		transaction(tx => {
@@ -495,15 +510,20 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 			}
 		}
 
+		let existingInput: MultiDiffEditorInput | undefined;
 		for (const group of this._editorGroupsService.groups) {
 			for (const editor of group.editors) {
 				if (editor instanceof MultiDiffEditorInput) {
-					await group.closeEditor(editor);
+					if (editor.multiDiffSource?.toString() === multiDiffSourceUri.toString()) {
+						existingInput = editor;
+					} else {
+						await group.closeEditor(editor);
+					}
 				}
 			}
 		}
 
-		const input = MultiDiffEditorInput.fromResourceMultiDiffEditorInput({
+		const input = existingInput ?? MultiDiffEditorInput.fromResourceMultiDiffEditorInput({
 			multiDiffSource: multiDiffSourceUri,
 			label: title ?? localize('multiDiffEditorInput.name', "Diffview"),
 			isReadonly: true

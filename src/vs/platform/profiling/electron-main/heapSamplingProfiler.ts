@@ -5,7 +5,7 @@
 
 import { BrowserWindow } from 'electron';
 import { ILogService } from '../../log/common/log.js';
-import { join } from 'path';
+import { join } from '../../../base/common/path.js';
 import { tmpdir } from 'os';
 import { promises as fs } from 'fs';
 
@@ -46,7 +46,7 @@ export class HeapSamplingProfiler {
 		try {
 			this._logService.warn(`[OOM Monitor] High memory detected (${reason})! Dumping Heap Sampling Profile...`);
 			const { profile } = await inspector.sendCommand('HeapProfiler.getSamplingProfile');
-			
+
 			const dumpDir = join(tmpdir(), 'vscode-oom-diagnostics');
 			await fs.mkdir(dumpDir, { recursive: true });
 

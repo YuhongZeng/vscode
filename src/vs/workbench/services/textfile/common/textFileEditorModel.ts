@@ -143,7 +143,10 @@ export class TextFileEditorModel extends BaseTextEditorModel implements ITextFil
 	private registerListeners(): void {
 		this._register(this.fileService.onDidFilesChange(e => this.onDidFilesChange(e)));
 		this._register(this.filesConfigurationService.onDidChangeFilesAssociation(() => this.onDidChangeFilesAssociation()));
-		this._register(this.filesConfigurationService.onDidChangeReadonly(() => this._onDidChangeReadonly.fire()));
+	}
+
+	updateReadonly(): void {
+		this._onDidChangeReadonly.fire();
 	}
 
 	private async onDidFilesChange(e: FileChangesEvent): Promise<void> {

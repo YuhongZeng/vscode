@@ -43,6 +43,10 @@ export class TestWorkerService extends mock<IEditorWorkerService>() implements I
 		const originalModel = this._modelService.getModel(original);
 		const modifiedModel = this._modelService.getModel(modified);
 
+		if (!originalModel || !modifiedModel) {
+			return null;
+		}
+
 		assertType(originalModel);
 		assertType(modifiedModel);
 

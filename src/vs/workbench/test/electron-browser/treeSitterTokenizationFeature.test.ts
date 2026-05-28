@@ -138,7 +138,8 @@ suite('Tree Sitter TokenizationFeature', function () {
 			configurationService,
 			textResourcePropertiesService,
 			undoRedoService,
-			instantiationService
+			instantiationService,
+			instantiationService.get(ILanguageConfigurationService)
 		);
 		instantiationService.set(IModelService, modelService);
 	});

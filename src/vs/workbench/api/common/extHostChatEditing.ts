@@ -23,12 +23,11 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 		return (listener, thisArgs, disposables) => {
 			const result = this._onDidUserAction.event(listener, thisArgs, disposables);
 			if (this._pendingActions.length > 0) {
-				queueMicrotask(() => {
-					for (const action of this._pendingActions) {
-						listener.call(thisArgs, action);
-					}
-					this._pendingActions.length = 0;
-				});
+				const actions = [...this._pendingActions];
+				this._pendingActions.length = 0;
+				for (const action of actions) {
+					this._onDidUserAction.fire(action);
+				}
 			}
 			return result;
 		};
@@ -90,7 +89,7 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 		this._files = files.map(f => ({
 			uri: URI.revive(f.uri),
 			state: f.state,
-			isNew: f.kind === 0, // ChatEditKind.Created
+			kind: f.kind,
 			added: f.added,
 			removed: f.removed
 		}));
@@ -105,7 +104,7 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 			file: {
 				uri: URI.revive(action.file.uri),
 				state: action.file.state,
-				isNew: action.file.kind === 0, // ChatEditKind.Created
+				kind: action.file.kind,
 				added: action.file.added,
 				removed: action.file.removed
 			}
@@ -144,11 +143,14 @@ export class ExtHostChatEditing implements IExtHostChatEditing {
 		return (listener, thisArgs, disposables) => {
 			const result = this._onDidUnclaimedUserAction.event(listener, thisArgs, disposables);
 			if (this._unclaimedSessionIds.size > 0) {
-				queueMicrotask(() => {
-					for (const chatSessionId of this._unclaimedSessionIds) {
+				for (const chatSessionId of this._unclaimedSessionIds) {
+					try {
 						listener.call(thisArgs, { chatSessionId });
+					} catch (e) {
+						// Error handling for synchronous listener execution
+						console.error(e);
 					}
-				});
+				}
 			}
 			return result;
 		};

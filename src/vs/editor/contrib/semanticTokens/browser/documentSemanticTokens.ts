@@ -6,8 +6,7 @@
 import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import * as errors from '../../../../base/common/errors.js';
-import { Disposable, IDisposable, dispose } from '../../../../base/common/lifecycle.js';
-import { ResourceMap } from '../../../../base/common/map.js';
+import { Disposable, IDisposable, dispose, DisposableResourceMap } from '../../../../base/common/lifecycle.js';
 import { StopWatch } from '../../../../base/common/stopwatch.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
@@ -26,7 +25,8 @@ import { SEMANTIC_HIGHLIGHTING_SETTING_ID, isSemanticColoringEnabled } from '../
 
 export class DocumentSemanticTokensFeature extends Disposable {
 
-	private readonly _watchers = new ResourceMap<ModelSemanticColoring>();
+	private readonly _watchers = this._register(new DisposableResourceMap<ModelSemanticColoring>());
+	private readonly _modelListeners = this._register(new DisposableResourceMap<IDisposable>());
 
 	constructor(
 		@ISemanticTokensStylingService semanticTokensStylingService: ISemanticTokensStylingService,
@@ -39,42 +39,37 @@ export class DocumentSemanticTokensFeature extends Disposable {
 		super();
 
 		const register = (model: ITextModel) => {
-			this._watchers.get(model.uri)?.dispose();
 			this._watchers.set(model.uri, new ModelSemanticColoring(model, semanticTokensStylingService, themeService, languageFeatureDebounceService, languageFeaturesService));
 		};
-		const deregister = (model: ITextModel, modelSemanticColoring: ModelSemanticColoring) => {
-			modelSemanticColoring.dispose();
-			this._watchers.delete(model.uri);
+		const deregister = (model: ITextModel) => {
+			this._watchers.deleteAndDispose(model.uri);
 		};
+		const update = (model: ITextModel) => {
+			if (model.isAttachedToEditor() && isSemanticColoringEnabled(model, themeService, configurationService)) {
+				if (!this._watchers.has(model.uri)) {
+					register(model);
+				}
+			} else {
+				deregister(model);
+			}
+		};
+
 		const handleSettingOrThemeChange = () => {
 			for (const model of modelService.getModels()) {
-				const curr = this._watchers.get(model.uri);
-				if (isSemanticColoringEnabled(model, themeService, configurationService)) {
-					if (!curr) {
-						register(model);
-					}
-				} else {
-					if (curr) {
-						deregister(model, curr);
-					}
-				}
+				update(model);
 			}
 		};
-		modelService.getModels().forEach(model => {
-			if (isSemanticColoringEnabled(model, themeService, configurationService)) {
-				register(model);
-			}
-		});
-		this._register(modelService.onModelAdded((model) => {
-			if (isSemanticColoringEnabled(model, themeService, configurationService)) {
-				register(model);
-			}
-		}));
+
+		const onModelAdded = (model: ITextModel) => {
+			this._modelListeners.set(model.uri, model.onDidChangeAttached(() => update(model)));
+			update(model);
+		};
+
+		modelService.getModels().forEach(onModelAdded);
+		this._register(modelService.onModelAdded(onModelAdded));
 		this._register(modelService.onModelRemoved((model) => {
-			const curr = this._watchers.get(model.uri);
-			if (curr) {
-				deregister(model, curr);
-			}
+			deregister(model);
+			this._modelListeners.deleteAndDispose(model.uri);
 		}));
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(SEMANTIC_HIGHLIGHTING_SETTING_ID)) {
@@ -82,13 +77,6 @@ export class DocumentSemanticTokensFeature extends Disposable {
 			}
 		}));
 		this._register(themeService.onDidColorThemeChange(handleSettingOrThemeChange));
-	}
-
-	override dispose(): void {
-		dispose(this._watchers.values());
-		this._watchers.clear();
-
-		super.dispose();
 	}
 }
 
@@ -127,11 +115,6 @@ class ModelSemanticColoring extends Disposable {
 		this._providersChangedDuringRequest = false;
 
 		this._register(this._model.onDidChangeContent(() => {
-			if (!this._fetchDocumentSemanticTokens.isScheduled()) {
-				this._fetchDocumentSemanticTokens.schedule(this._debounceInformation.get(this._model));
-			}
-		}));
-		this._register(this._model.onDidChangeAttached(() => {
 			if (!this._fetchDocumentSemanticTokens.isScheduled()) {
 				this._fetchDocumentSemanticTokens.schedule(this._debounceInformation.get(this._model));
 			}

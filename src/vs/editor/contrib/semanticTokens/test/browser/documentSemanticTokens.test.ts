@@ -62,7 +62,8 @@ suite('ModelSemanticColoring', () => {
 			configService,
 			new TestTextResourcePropertiesService(configService),
 			new UndoRedoService(new TestDialogService(), new TestNotificationService()),
-			instantiationService
+			instantiationService,
+			instantiationService.get(ILanguageConfigurationService)
 		));
 		const envService = new class extends mock<IEnvironmentService>() {
 			override isBuilt: boolean = true;

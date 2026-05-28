@@ -431,7 +431,7 @@ export class ChatEditingModifiedNotebookEntry extends AbstractChatEditingModifie
 	}
 
 
-	protected override async _doAccept(): Promise<void> {
+	protected override async _doAccept(options?: { isFromApi?: boolean; isBulk?: boolean }): Promise<void> {
 		this.updateCellDiffInfo([], undefined);
 		const snapshot = createSnapshot(this.modifiedModel, this.transientOptions, this.configurationService);
 		restoreSnapshot(this.originalModel, snapshot);
@@ -446,6 +446,7 @@ export class ChatEditingModifiedNotebookEntry extends AbstractChatEditingModifie
 					await this.modifiedResourceRef.object.save({
 						reason: SaveReason.EXPLICIT,
 						force: true,
+						skipSaveParticipants: options?.isFromApi || options?.isBulk,
 						ignoreErrorHandler: true
 					});
 				} catch {

@@ -111,7 +111,6 @@ export class ChatEditingTextModelChangeService extends Disposable {
 		}
 	}
 
-	private _didUserEditModelFired = false;
 	private readonly _didUserEditModel = this._register(new Emitter<void>());
 	public readonly onDidUserEditModel = this._didUserEditModel.event;
 
@@ -177,7 +176,37 @@ export class ChatEditingTextModelChangeService extends Disposable {
 		assertType(textEdits.every(TextEdit.isTextEdit), 'INVALID args, can only handle text edits');
 		assert(isEqual(resource, this.modifiedModel.uri), ' INVALID args, can only edit THIS document');
 
-		const isAtomicEdits = textEdits.length > 0 && isLastEdits;
+		let eofLine = this.modifiedModel.getLineCount();
+		let eofColumn = this.modifiedModel.getLineMaxColumn(eofLine);
+		const adjustedEdits: TextEdit[] = [];
+		for (const _edit of textEdits) {
+			const edit = _edit as TextEdit;
+			let newText = edit.text;
+
+			if (newText.length <= 0) {
+				adjustedEdits.push(edit);
+				continue;
+			}
+
+			let newRange = edit.range;
+			if (edit.range.startLineNumber > eofLine) {
+				newText = this.modifiedModel.getEOL() + newText;
+				newRange = new Range(eofLine, eofColumn, eofLine, eofColumn);
+
+				const lines = newText.split(/\r\n|\r|\n/);
+				eofLine += lines.length - 1;
+				if (lines.length > 1) {
+					eofColumn = lines[lines.length - 1].length + 1;
+				} else {
+					eofColumn += lines[0].length;
+				}
+			}
+
+			adjustedEdits.push({ ...edit, range: newRange, text: newText });
+		}
+		const finalEdits = adjustedEdits;
+
+		const isAtomicEdits = finalEdits.length > 0 && isLastEdits;
 		let maxLineNumber = 0;
 		let rewriteRatio = 0;
 
@@ -185,7 +214,7 @@ export class ChatEditingTextModelChangeService extends Disposable {
 
 		if (isAtomicEdits) {
 			// EDIT and DONE
-			const minimalEdits = await this._editorWorkerService.computeMoreMinimalEdits(this.modifiedModel.uri, textEdits) ?? textEdits;
+			const minimalEdits = await this._editorWorkerService.computeMoreMinimalEdits(this.modifiedModel.uri, finalEdits) ?? finalEdits;
 			const ops = minimalEdits.map(TextEdit.asEditOperation);
 			const undoEdits = this._applyEdits(ops, source);
 
@@ -222,7 +251,7 @@ export class ChatEditingTextModelChangeService extends Disposable {
 
 		} else {
 			// EDIT a bit, then DONE
-			const ops = textEdits.map(TextEdit.asEditOperation);
+			const ops = finalEdits.map(TextEdit.asEditOperation);
 			const undoEdits = this._applyEdits(ops, source);
 			maxLineNumber = undoEdits.reduce((max, op) => Math.max(max, op.range.startLineNumber), 0);
 			rewriteRatio = Math.min(1, maxLineNumber / this.modifiedModel.getLineCount());
@@ -331,7 +360,6 @@ export class ChatEditingTextModelChangeService extends Disposable {
 	private _reset() {
 		this._originalToModifiedEdit = StringEdit.empty;
 		this._diffInfo.set(nullDocumentDiff, undefined);
-		this._didUserEditModelFired = false;
 	}
 
 	public async resetDocumentValues(newOriginal: string | ITextSnapshot | undefined, newModified: string | undefined): Promise<void> {
@@ -396,10 +424,7 @@ export class ChatEditingTextModelChangeService extends Disposable {
 
 			this._allEditsAreFromUs = false;
 			this._updateDiffInfoSeq();
-			if (!this._didUserEditModelFired) {
-				this._didUserEditModelFired = true;
-				this._didUserEditModel.fire();
-			}
+			this._didUserEditModel.fire();
 		}
 	}
 

@@ -54,6 +54,10 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 	protected readonly _stateObs = observableValue<ModifiedFileEntryState>(this, ModifiedFileEntryState.Modified);
 	readonly state: IObservable<ModifiedFileEntryState> = this._stateObs;
 
+	public markAsDeleted(): void {
+		this._onDidDelete.fire();
+	}
+
 	updateState(state: ModifiedFileEntryState, tx: ITransaction | undefined): void {
 		this._stateObs.set(state, tx);
 	}
@@ -132,11 +136,6 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 
 		if (this.modifiedURI.scheme !== Schemas.untitled && this.modifiedURI.scheme !== Schemas.vscodeNotebookCell) {
 			this._register(this._fileService.watch(this.modifiedURI));
-			this._register(this._fileService.onDidFilesChange(e => {
-				if (e.affects(this.modifiedURI) && kind === ChatEditKind.Created && e.gotDeleted()) {
-					this._onDidDelete.fire();
-				}
-			}));
 		}
 
 		// review mode depends on setting and temporary override
@@ -239,13 +238,13 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 	}
 
 	/** Accepts and returns a function used to transition the state. This MUST be called by the consumer. */
-	async acceptDeferred(options?: { isFromApi?: boolean }): Promise<((tx: ITransaction) => void) | undefined> {
+	async acceptDeferred(options?: { isFromApi?: boolean; isBulk?: boolean }): Promise<((tx: ITransaction) => void) | undefined> {
 		if (this._stateObs.get() !== ModifiedFileEntryState.Modified) {
 			// already accepted or rejected
 			return;
 		}
 
-		await this._doAccept();
+		await this._doAccept(options);
 
 		return (tx: ITransaction) => {
 			const wasModified = this._stateObs.get() === ModifiedFileEntryState.Modified;
@@ -259,7 +258,7 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 		};
 	}
 
-	protected abstract _doAccept(): Promise<void>;
+	protected abstract _doAccept(options?: { isFromApi?: boolean; isBulk?: boolean }): Promise<void>;
 	protected _doAcceptTransition(tx: ITransaction): void { }
 
 	async reject(): Promise<void> {
@@ -270,7 +269,7 @@ export abstract class AbstractChatEditingModifiedFileEntry extends Disposable im
 	}
 
 	/** Rejects and returns a function used to transition the state. This MUST be called by the consumer. */
-	async rejectDeferred(options?: { isFromApi?: boolean }): Promise<((tx: ITransaction) => void) | undefined> {
+	async rejectDeferred(options?: { isFromApi?: boolean; isBulk?: boolean }): Promise<((tx: ITransaction) => void) | undefined> {
 		if (this._stateObs.get() !== ModifiedFileEntryState.Modified) {
 			// already accepted or rejected
 			return undefined;

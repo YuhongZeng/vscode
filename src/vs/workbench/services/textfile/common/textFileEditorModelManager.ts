@@ -24,6 +24,7 @@ import { extname, joinPath } from '../../../../base/common/resources.js';
 import { createTextBufferFactoryFromSnapshot } from '../../../../editor/common/model/textModel.js';
 import { PLAINTEXT_EXTENSION, PLAINTEXT_LANGUAGE_ID } from '../../../../editor/common/languages/modesRegistry.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
+import { IFilesConfigurationService } from '../../filesConfiguration/common/filesConfigurationService.js';
 import { IProgress, IProgressStep } from '../../../../platform/progress/common/progress.js';
 
 interface ITextFileEditorModelToRestore {
@@ -39,7 +40,7 @@ interface ITextFileEditorModelToRestore {
 
 export class TextFileEditorModelManager extends Disposable implements ITextFileEditorModelManager {
 
-	private readonly _onDidCreate = this._register(new Emitter<TextFileEditorModel>({ leakWarningThreshold: 500 /* increased for users with hundreds of inputs opened */ }));
+	private readonly _onDidCreate = this._register(new Emitter<TextFileEditorModel>());
 	readonly onDidCreate = this._onDidCreate.event;
 
 	private readonly _onDidResolve = this._register(new Emitter<ITextFileResolveEvent>());
@@ -95,7 +96,8 @@ export class TextFileEditorModelManager extends Disposable implements ITextFileE
 		@IFileService private readonly fileService: IFileService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IWorkingCopyFileService private readonly workingCopyFileService: IWorkingCopyFileService,
-		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService
+		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
+		@IFilesConfigurationService private readonly filesConfigurationService: IFilesConfigurationService
 	) {
 		super();
 
@@ -117,6 +119,12 @@ export class TextFileEditorModelManager extends Disposable implements ITextFileE
 		this._register(this.workingCopyFileService.onWillRunWorkingCopyFileOperation(e => this.onWillRunWorkingCopyFileOperation(e)));
 		this._register(this.workingCopyFileService.onDidFailWorkingCopyFileOperation(e => this.onDidFailWorkingCopyFileOperation(e)));
 		this._register(this.workingCopyFileService.onDidRunWorkingCopyFileOperation(e => this.onDidRunWorkingCopyFileOperation(e)));
+
+		this._register(this.filesConfigurationService.onDidChangeReadonly(() => {
+			for (const model of this.models) {
+				model.updateReadonly();
+			}
+		}));
 	}
 
 	private onDidFilesChange(e: FileChangesEvent): void {

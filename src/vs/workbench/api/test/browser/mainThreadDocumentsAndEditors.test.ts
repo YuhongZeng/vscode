@@ -78,7 +78,8 @@ suite('MainThreadDocumentsAndEditors', () => {
 			configService,
 			new TestTextResourcePropertiesService(configService),
 			undoRedoService,
-			instantiationService
+			instantiationService,
+			instantiationService.get(ILanguageConfigurationService)
 		);
 		codeEditorService = new TestCodeEditorService(themeService);
 		textFileService = new class extends mock<ITextFileService>() {

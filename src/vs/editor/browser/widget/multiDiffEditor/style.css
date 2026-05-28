@@ -102,7 +102,7 @@
 		flex-direction: column;
 		flex: 1;
 		overflow: hidden;
-		padding: 8px 12px;
+		padding: 4px 12px;
 		box-sizing: border-box;
 
 		.collapse-button {
@@ -211,6 +211,13 @@
 		}
 
 		&.collapsed .editorParent {
+			display: none;
+		}
+
+		&.is-deleted .editor.modified .line-insert,
+		&.is-deleted .editor.modified .char-insert,
+		&.is-deleted .editor.modified .gutter-insert,
+		&.is-deleted .editor.modified .diagonal-fill {
 			display: none;
 		}
 

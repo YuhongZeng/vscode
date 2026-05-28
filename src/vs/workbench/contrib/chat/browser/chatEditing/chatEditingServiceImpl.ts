@@ -36,7 +36,7 @@ import { ILifecycleService } from '../../../../services/lifecycle/common/lifecyc
 import { IMultiDiffSourceResolver, IMultiDiffSourceResolverService, IResolvedMultiDiffSource, MultiDiffEditorItem } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
 import { CellUri, ICellEditOperation } from '../../../notebook/common/notebookCommon.js';
 import { INotebookService } from '../../../notebook/common/notebookService.js';
-import { CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, chatEditingAgentSupportsReadonlyReferencesContextKey, chatEditingResourceContextKey, ChatEditingSessionState, IChatEditingService, IChatEditingSession, IModifiedFileEntry, inChatEditingSessionContextKey, IStreamingEdits, ModifiedFileEntryState, parseChatMultiDiffUri } from '../../common/editing/chatEditingService.js';
+import { CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, ChatEditKind, chatEditingAgentSupportsReadonlyReferencesContextKey, chatEditingResourceContextKey, ChatEditingSessionState, IChatEditingService, IChatEditingSession, IModifiedFileEntry, inChatEditingSessionContextKey, IStreamingEdits, ModifiedFileEntryState, parseChatMultiDiffUri } from '../../common/editing/chatEditingService.js';
 import { ChatModel, ICellTextEditOperation, IChatResponseModel, isCellTextEditOperationArray } from '../../common/model/chatModel.js';
 import { IChatService } from '../../common/chatService/chatService.js';
 import { ChatEditorInput } from '../widgetHosts/editor/chatEditorInput.js';
@@ -139,6 +139,16 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 				id: 'join.chatEditingSession',
 				label: localize('join.chatEditingSession', "Saving chat edits history")
 			});
+		}));
+
+		this._register(this._fileService.onDidFilesChange(e => {
+			for (const session of this._sessionsObs.get()) {
+				for (const entry of session.entries.get()) {
+					if (entry.kind === ChatEditKind.Created && e.affects(entry.modifiedURI) && e.gotDeleted()) {
+						(entry as AbstractChatEditingModifiedFileEntry).markAsDeleted();
+					}
+				}
+			}
 		}));
 	}
 
@@ -481,7 +491,7 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 				if (entryDiff) {
 					return new MultiDiffEditorItem(
 						entryDiff.originalURI,
-						entryDiff.modifiedURI,
+						entry.isDeletion ? undefined : entryDiff.modifiedURI,
 						undefined,
 						undefined,
 						{
@@ -495,7 +505,7 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 
 			return new MultiDiffEditorItem(
 				entry.originalURI,
-				entry.modifiedURI,
+				entry.isDeletion ? undefined : entry.modifiedURI,
 				undefined,
 				undefined,
 				{

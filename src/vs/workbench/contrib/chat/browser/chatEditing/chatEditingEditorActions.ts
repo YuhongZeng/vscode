@@ -289,7 +289,7 @@ async function openNextOrPreviousChange(accessor: ServicesAccessor, session: ICh
 	}
 
 	const pane = await editorService.openEditor({
-		resource: newEntry.modifiedURI,
+		resource: newEntry.isDeletion ? newEntry.originalURI : newEntry.modifiedURI,
 		options: {
 			revealIfOpened: false,
 			revealIfVisible: false,

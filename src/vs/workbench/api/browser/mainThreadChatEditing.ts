@@ -59,6 +59,9 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 
 					let type: number;
 					if (e.action.kind === 'chatEditingSessionAction') {
+						if (e.action.outcome === 'userModified') {
+							continue;
+						}
 						type = e.action.outcome === 'accepted' ? 1 /* FileAccepted */ : 2 /* FileRejected */;
 					} else {
 						type = e.action.outcome === 'accepted' ? 3 /* HunkAccepted */ : 4 /* HunkRejected */;

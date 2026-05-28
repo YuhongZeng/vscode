@@ -97,7 +97,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			h('div.header@header', [
 				h('div.header-content', [
 					h('div.collapse-button@collapseButton'),
-					h('div.file-path', [
+					h('div.file-path@filePath', [
 						h('div.title.modified.show-file-icons@primaryPath', []),
 						h('div.status.deleted@status', ['R']),
 						h('div.title.original.show-file-icons@secondaryPath', []),
@@ -111,6 +111,23 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 				h('div.editorContainer@editor'),
 			])
 		]) as Record<string, HTMLElement>;
+		this._elements.filePath.style.display = 'flex';
+		this._elements.filePath.style.alignItems = 'center';
+		this._elements.filePath.style.minWidth = '0';
+		this._elements.filePath.style.flex = '1';
+
+		this._elements.primaryPath.style.minWidth = '0';
+		this._elements.primaryPath.style.flexShrink = '1';
+		this._elements.primaryPath.style.overflow = 'hidden';
+		this._elements.primaryPath.style.whiteSpace = 'nowrap';
+		this._elements.primaryPath.style.textOverflow = 'ellipsis';
+
+		this._elements.secondaryPath.style.minWidth = '0';
+		this._elements.secondaryPath.style.flexShrink = '1';
+		this._elements.secondaryPath.style.overflow = 'hidden';
+		this._elements.secondaryPath.style.whiteSpace = 'nowrap';
+		this._elements.secondaryPath.style.textOverflow = 'ellipsis';
+
 		this.editor = this._register(this._instantiationService.createInstance(DiffEditorWidget, this._elements.editor, {
 			overflowWidgetsDomNode: this._overflowWidgetsDomNode,
 			fixedOverflowWidgets: true
@@ -126,7 +143,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			: undefined;
 		this._dataStore = this._register(new DisposableStore());
 		this._headerHeight = 36;
-		this._outerEditorHeight = this._headerHeight + 16;
+		this._outerEditorHeight = this._headerHeight + 8;
 		this._lastScrollTop = -1;
 		this._isSettingScrollTop = false;
 
@@ -244,7 +261,15 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			let isDeleted = false;
 			let isAdded = false;
 			let flag = '';
-			if (data.viewModel.modifiedUri && data.viewModel.originalUri && data.viewModel.modifiedUri.path !== data.viewModel.originalUri.path) {
+
+			const contextKeys = data.viewModel.documentDiffItem.contextKeys;
+			if (contextKeys?.['chatEditing.isAdded']) {
+				flag = 'A';
+				isAdded = true;
+			} else if (contextKeys?.['chatEditing.isDeleted']) {
+				flag = 'D';
+				isDeleted = true;
+			} else if (data.viewModel.modifiedUri && data.viewModel.originalUri && data.viewModel.modifiedUri.path !== data.viewModel.originalUri.path) {
 				flag = 'R';
 				isRenamed = true;
 			} else if (!data.viewModel.modifiedUri) {
@@ -259,6 +284,8 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			this._elements.status.classList.toggle('added', isAdded);
 			this._elements.status.innerText = flag;
 
+			this._elements.root.classList.toggle('is-added', isAdded);
+			this._elements.root.classList.toggle('is-deleted', isDeleted);
 			this._dataStore.clear();
 
 			this._dataStore.add(autorun(reader => {
@@ -275,12 +302,19 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 					linesRemoved = data.viewModel.documentDiffItem.linesRemoved ?? 0;
 				}
 
+				if (isAdded) {
+					linesRemoved = 0;
+				} else if (isDeleted) {
+					linesAdded = 0;
+				}
+
 				if (linesAdded > 0 || linesRemoved > 0) {
 					this._elements.stats.style.display = 'flex';
 					this._elements.stats.style.gap = '4px';
 					this._elements.stats.style.marginLeft = '8px';
 					this._elements.stats.style.alignItems = 'center';
 					this._elements.stats.style.fontSize = '12px';
+					this._elements.stats.style.flexShrink = '0';
 
 					this._elements.stats.replaceChildren();
 					if (linesAdded > 0) {
@@ -340,7 +374,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 
 		// For sticky scroll
 		const maxDelta = verticalRange.length - this._outerEditorHeight;
-		const delta = Math.max(0, Math.min(viewPort.start - verticalRange.start - 8, maxDelta));
+		const delta = Math.max(0, Math.min(viewPort.start - verticalRange.start - 4, maxDelta));
 		this._elements.header.style.transform = `translateY(${delta}px)`;
 
 		globalTransaction(() => {

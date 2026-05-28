@@ -3075,6 +3075,13 @@ export class ChatCompletionItem implements vscode.ChatCompletionItem {
 	}
 }
 
+export enum ChatEditKind {
+	Created = 0,
+	Modified = 1,
+	Deleted = 2,
+}
+
+
 export enum ChatEditingFileState {
 	Modified = 0,
 	Accepted = 1,

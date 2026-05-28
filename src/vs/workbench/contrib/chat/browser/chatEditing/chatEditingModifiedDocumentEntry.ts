@@ -140,11 +140,15 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 		const docSnapshot = this._originalModel = this._register(
 			modelService.createModel(
 				createTextBufferFactoryFromSnapshot(initialContent !== undefined ? stringToSnapshot(initialContent) : this.modifiedModel.createSnapshot()),
-				languageService.createById(this.modifiedModel.getLanguageId()),
+				null,
 				this.originalURI,
 				false
 			)
 		);
+		docSnapshot.setLanguage(this.modifiedModel.getLanguageId());
+		this._register(this.modifiedModel.onDidChangeLanguage(e => {
+			docSnapshot.setLanguage(e.newLanguage);
+		}));
 
 		this._textModelChangeService = this._register(instantiationService.createInstance(ChatEditingTextModelChangeService,
 			this.originalModel, this.modifiedModel, this._stateObs, () => this._isExternalEditInProgress));
@@ -180,6 +184,7 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 			const didResetToOriginalContent = this.modifiedModel.getValue() === this.initialContent;
 			if (this._stateObs.get() === ModifiedFileEntryState.Modified && didResetToOriginalContent) {
 				this._stateObs.set(ModifiedFileEntryState.Rejected, undefined);
+				this._notifySessionAction('rejected');
 			}
 		}));
 
@@ -287,7 +292,7 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 	}
 
 
-	protected override async _doAccept(): Promise<void> {
+	protected override async _doAccept(options?: { isFromApi?: boolean; isBulk?: boolean }): Promise<void> {
 		this._textModelChangeService!.keep();
 
 		const config = this._fileConfigService.getAutoSaveConfiguration(this.modifiedURI);
@@ -298,6 +303,7 @@ export class ChatEditingModifiedDocumentEntry extends AbstractChatEditingModifie
 				await this._textFileService.save(this.modifiedURI, {
 					reason: SaveReason.EXPLICIT,
 					force: true,
+					skipSaveParticipants: options?.isFromApi || options?.isBulk,
 					ignoreErrorHandler: true
 				});
 			} catch {

@@ -124,6 +124,11 @@ export interface IStoredFileWorkingCopy<M extends IStoredFileWorkingCopyModel> e
 	readonly onDidChangeReadonly: Event<void>;
 
 	/**
+	 * Updates the readonly state of the stored file working copy.
+	 */
+	updateReadonly(): void;
+
+	/**
 	 * Resolves a stored file working copy.
 	 */
 	resolve(options?: IStoredFileWorkingCopyResolveOptions): Promise<void>;
@@ -373,7 +378,10 @@ export class StoredFileWorkingCopy<M extends IStoredFileWorkingCopyModel> extend
 	}
 
 	private registerListeners(): void {
-		this._register(this.filesConfigurationService.onDidChangeReadonly(() => this._onDidChangeReadonly.fire()));
+	}
+
+	updateReadonly(): void {
+		this._onDidChangeReadonly.fire();
 	}
 
 	//#region Dirty

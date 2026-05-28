@@ -7,6 +7,7 @@
 	padding: 2px 4px;
 	color: var(--vscode-foreground);
 	background-color: var(--vscode-editorWidget-background);
+	background-image: linear-gradient(90deg, rgba(152, 107, 255, 0.13) 0%, rgba(70, 189, 241, 0.13) 100%);
 	border-radius: 6px;
 	border: 1px solid var(--vscode-contrastBorder);
 	display: flex;
@@ -16,6 +17,38 @@
 	z-index: 10;
 	box-shadow: 0 2px 8px var(--vscode-widget-shadow);
 	overflow: hidden;
+	position: relative;
+}
+
+.vs-dark .chat-editor-overlay-widget::before,
+.vs-dark .chat-editor-overlay-widget::after,
+.hc-black .chat-editor-overlay-widget::before,
+.hc-black .chat-editor-overlay-widget::after {
+	content: '';
+	background: rgba(131, 77, 240, 0.6);
+	filter: blur(20px);
+	mix-blend-mode: screen;
+	position: absolute;
+	pointer-events: none;
+	width: 50px;
+	height: 50px;
+	border-radius: 50%;
+	bottom: -20px;
+}
+
+.vs-dark .chat-editor-overlay-widget::before,
+.hc-black .chat-editor-overlay-widget::before {
+	left: 30px;
+}
+
+.vs-dark .chat-editor-overlay-widget::after,
+.hc-black .chat-editor-overlay-widget::after {
+	left: 110px;
+}
+
+.chat-editor-overlay-widget > * {
+	position: relative;
+	z-index: 1;
 }
 
 @keyframes pulse {

@@ -18,6 +18,7 @@ import { EditOperation, ISingleEditOperation } from '../core/editOperation.js';
 import { EDITOR_MODEL_DEFAULTS } from '../core/misc/textModelDefaults.js';
 import { Range } from '../core/range.js';
 import { ILanguageSelection } from '../languages/language.js';
+import { ILanguageConfigurationService } from '../languages/languageConfigurationRegistry.js';
 import { PLAINTEXT_LANGUAGE_ID } from '../languages/modesRegistry.js';
 import { DefaultEndOfLine, EndOfLinePreference, EndOfLineSequence, ITextBuffer, ITextBufferFactory, ITextModel, ITextModelCreationOptions } from '../model.js';
 import { isEditStackElement } from '../model/editStack.js';
@@ -109,7 +110,8 @@ export class ModelService extends Disposable implements IModelService {
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@ITextResourcePropertiesService private readonly _resourcePropertiesService: ITextResourcePropertiesService,
 		@IUndoRedoService private readonly _undoRedoService: IUndoRedoService,
-		@IInstantiationService private readonly _instantiationService: IInstantiationService
+		@IInstantiationService private readonly _instantiationService: IInstantiationService,
+		@ILanguageConfigurationService private readonly _languageConfigurationService: ILanguageConfigurationService
 	) {
 		super();
 		this._modelCreationOptionsByLanguageAndResource = Object.create(null);
@@ -119,6 +121,15 @@ export class ModelService extends Disposable implements IModelService {
 
 		this._register(this._configurationService.onDidChangeConfiguration(e => this._updateModelOptions(e)));
 		this._updateModelOptions(undefined);
+
+		this._register(this._languageConfigurationService.onDidChange(e => {
+			const models = this.getModels();
+			for (const model of models) {
+				if (model instanceof TextModel) {
+					model.onLanguageConfigurationChange(e);
+				}
+			}
+		}));
 	}
 
 	private static _readModelOptions(config: IRawConfig, isForSimpleWidget: boolean): ITextModelCreationOptions {

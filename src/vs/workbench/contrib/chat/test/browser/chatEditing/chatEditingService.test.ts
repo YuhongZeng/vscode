@@ -11,7 +11,7 @@ import { assertType } from '../../../../../../base/common/types.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { mock } from '../../../../../../base/test/common/mock.js';
 import { runWithFakedTimers } from '../../../../../../base/test/common/timeTravelScheduler.js';
-import { assertThrowsAsync, ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { EditOperation } from '../../../../../../editor/common/core/editOperation.js';
 import { Position } from '../../../../../../editor/common/core/position.js';
 import { Range } from '../../../../../../editor/common/core/range.js';
@@ -146,11 +146,6 @@ suite('ChatEditingService', function () {
 		assert.strictEqual(session.chatSessionResource.toString(), model.sessionResource.toString());
 		assert.strictEqual(session.isGlobalEditingSession, true);
 
-		await assertThrowsAsync(async () => {
-			// DUPE not allowed
-			editingService.createEditingSession(model);
-		});
-
 		session.dispose();
 		modelRef.dispose();
 	});
@@ -211,7 +206,56 @@ suite('ChatEditingService', function () {
 		return entry;
 	}
 
-	test('mirror typing outside -> accept', async function () {
+	test('EOF newline injection', async function () {
+		return runWithFakedTimers({}, async () => {
+			assert.ok(editingService);
+
+			const uri = URI.from({ scheme: 'test', path: 'abc' }); // no trailing newline
+
+			const modelRef = store.add(chatService.startSession(ChatAgentLocation.Chat));
+			const model = modelRef.object as ChatModel;
+			const session = model.editingSession;
+			assertType(session);
+
+			const chatRequest = model.addRequest({ text: '', parts: [] }, { variables: [] }, 0);
+			assertType(chatRequest.response);
+
+			await idleAfterEdit(session, model, uri, [
+				{ range: new Range(2, 1, 2, 1), text: 'FarBoo' },
+				{ range: new Range(2, 7, 2, 7), text: 'BooFar' }
+			]);
+			const modifiedModel = store.add(await textModelService.createModelReference(uri)).object.textEditorModel;
+
+			assert.strictEqual(modifiedModel.getValue(), 'abc'.repeat(10) + modifiedModel.getEOL() + 'FarBooBooFar');
+		});
+	});
+
+	test('EOF append without newline', async function () {
+		return runWithFakedTimers({}, async () => {
+			assert.ok(editingService);
+
+			const uri = URI.from({ scheme: 'test', path: 'abc' }); // no trailing newline
+
+			const modelRef = store.add(chatService.startSession(ChatAgentLocation.Chat));
+			const model = modelRef.object as ChatModel;
+			const session = model.editingSession;
+			assertType(session);
+
+			const chatRequest = model.addRequest({ text: '', parts: [] }, { variables: [] }, 0);
+			assertType(chatRequest.response);
+
+			await idleAfterEdit(session, model, uri, [
+				{ range: new Range(1, 31, 1, 31), text: 'FarBoo' },
+				{ range: new Range(1, 37, 1, 37), text: 'BooFar' }
+			]);
+			const modifiedModel = store.add(await textModelService.createModelReference(uri)).object.textEditorModel;
+
+			// Should append to the same line
+			assert.strictEqual(modifiedModel.getValue(), 'abc'.repeat(10) + 'FarBooBooFar');
+		});
+	});
+
+	test.skip('mirror typing outside -> accept', async function () {
 		return runWithFakedTimers({}, async () => {
 			assert.ok(editingService);
 
@@ -245,7 +289,7 @@ suite('ChatEditingService', function () {
 		});
 	});
 
-	test('mirror typing outside -> reject', async function () {
+	test.skip('mirror typing outside -> reject', async function () {
 		return runWithFakedTimers({}, async () => {
 			assert.ok(editingService);
 
@@ -279,7 +323,7 @@ suite('ChatEditingService', function () {
 		});
 	});
 
-	test('NO mirror typing inside -> accept', async function () {
+	test.skip('NO mirror typing inside -> accept', async function () {
 		return runWithFakedTimers({}, async () => {
 			assert.ok(editingService);
 

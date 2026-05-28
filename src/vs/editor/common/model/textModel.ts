@@ -33,7 +33,7 @@ import { TextChange } from '../core/textChange.js';
 import { IWordAtPosition } from '../core/wordHelper.js';
 import { FormattingOptions } from '../languages.js';
 import { ILanguageSelection, ILanguageService } from '../languages/language.js';
-import { ILanguageConfigurationService } from '../languages/languageConfigurationRegistry.js';
+import { ILanguageConfigurationService, LanguageConfigurationServiceChangeEvent } from '../languages/languageConfigurationRegistry.js';
 import * as model from '../model.js';
 import { IBracketPairsTextModelPart } from '../textModelBracketPairs.js';
 import { EditSources, TextModelEditSource } from '../textModelEditSource.js';
@@ -410,11 +410,11 @@ export class TextModel extends Disposable implements model.ITextModel, IDecorati
 		}));
 
 		this._languageService.requestRichLanguageFeatures(languageId);
+	}
 
-		this._register(this._languageConfigurationService.onDidChange(e => {
-			this._bracketPairs.handleLanguageConfigurationServiceChange(e);
-			this._tokenizationTextModelPart.handleLanguageConfigurationServiceChange(e);
-		}));
+	public onLanguageConfigurationChange(e: LanguageConfigurationServiceChangeEvent): void {
+		this._bracketPairs.handleLanguageConfigurationServiceChange(e);
+		this._tokenizationTextModelPart.handleLanguageConfigurationServiceChange(e);
 	}
 
 	public override dispose(): void {

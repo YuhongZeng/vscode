@@ -209,6 +209,12 @@ export class StoredFileWorkingCopyManager<M extends IStoredFileWorkingCopyModel>
 		this._register(this.workingCopyFileService.onDidFailWorkingCopyFileOperation(e => this.onDidFailWorkingCopyFileOperation(e)));
 		this._register(this.workingCopyFileService.onDidRunWorkingCopyFileOperation(e => this.onDidRunWorkingCopyFileOperation(e)));
 
+		this._register(this.filesConfigurationService.onDidChangeReadonly(() => {
+			for (const workingCopy of this.workingCopies) {
+				workingCopy.updateReadonly();
+			}
+		}));
+
 		// Lifecycle
 		if (isWeb) {
 			this._register(this.lifecycleService.onBeforeShutdown(event => event.veto(this.onBeforeShutdownWeb(), 'veto.fileWorkingCopyManager')));

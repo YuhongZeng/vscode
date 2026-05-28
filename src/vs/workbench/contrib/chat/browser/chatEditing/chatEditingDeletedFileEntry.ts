@@ -3,6 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { getCodeEditor } from '../../../../../editor/browser/editorBrowser.js';
+import { diffWholeLineDeleteDecoration } from '../../../../../editor/browser/widget/diffEditor/registrations.contribution.js';
+import { Range } from '../../../../../editor/common/core/range.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { constObservable, IObservable, ITransaction, observableValue, transaction } from '../../../../../base/common/observable.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -10,7 +13,6 @@ import { LineRange } from '../../../../../editor/common/core/ranges/lineRange.js
 import { IDocumentDiff } from '../../../../../editor/common/diff/documentDiffProvider.js';
 import { DetailedLineRangeMapping } from '../../../../../editor/common/diff/rangeMapping.js';
 import { TextEdit } from '../../../../../editor/common/languages.js';
-import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
 import { createTextBufferFactoryFromSnapshot } from '../../../../../editor/common/model/textModel.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
@@ -74,7 +76,6 @@ export class ChatEditingDeletedFileEntry extends AbstractChatEditingModifiedFile
 		telemetryInfo: IModifiedEntryTelemetryInfo,
 		private readonly _languageId: string,
 		@IModelService private readonly _modelService: IModelService,
-		@ILanguageService private readonly _languageService: ILanguageService,
 		@IConfigurationService configService: IConfigurationService,
 		@IFilesConfigurationService fileConfigService: IFilesConfigurationService,
 		@IChatService chatService: IChatService,
@@ -116,10 +117,11 @@ export class ChatEditingDeletedFileEntry extends AbstractChatEditingModifiedFile
 		if (!this._originalModel || this._originalModel.isDisposed()) {
 			this._originalModel = this._modelService.createModel(
 				createTextBufferFactoryFromSnapshot(stringToSnapshot(this._originalContent)),
-				this._languageService.createById(this._languageId),
+				null,
 				this.originalURI,
 				false
 			);
+			this._originalModel.setLanguage(this._languageId);
 		}
 		return this._originalModel;
 	}
@@ -132,10 +134,11 @@ export class ChatEditingDeletedFileEntry extends AbstractChatEditingModifiedFile
 			// Create empty model - file is deleted so content is empty
 			this._modifiedModel = this._modelService.createModel(
 				'',
-				this._languageService.createById(this._languageId),
+				null,
 				this.modifiedURI.with({ scheme: 'deleted-file' }),
 				false
 			);
+			this._modifiedModel.setLanguage(this._languageId);
 		}
 		return this._modifiedModel;
 	}
@@ -233,7 +236,7 @@ export class ChatEditingDeletedFileEntry extends AbstractChatEditingModifiedFile
 		});
 	}
 
-	protected override async _doAccept(): Promise<void> {
+	protected override async _doAccept(options?: { isFromApi?: boolean; isBulk?: boolean }): Promise<void> {
 		// File deletion is already done - just collapse the entry
 	}
 
@@ -250,7 +253,23 @@ export class ChatEditingDeletedFileEntry extends AbstractChatEditingModifiedFile
 		this._multiDiffEntryDelegate.collapse(tx);
 	}
 
-	protected _createEditorIntegration(_editor: IEditorPane): IModifiedFileEntryEditorIntegration {
+	protected _createEditorIntegration(editor: IEditorPane): IModifiedFileEntryEditorIntegration {
+		const codeEditor = getCodeEditor(editor.getControl());
+		let dispose = () => { };
+
+		if (codeEditor) {
+			const model = codeEditor.getModel();
+			if (model) {
+				const collection = codeEditor.createDecorationsCollection([
+					{
+						range: new Range(1, 1, model.getLineCount(), model.getLineMaxColumn(model.getLineCount())),
+						options: diffWholeLineDeleteDecoration
+					}
+				]);
+				dispose = () => collection.clear();
+			}
+		}
+
 		// Deleted files don't need complex editor integration since there's nothing to navigate
 		return {
 			currentIndex: observableValue(this, 0),
@@ -261,7 +280,7 @@ export class ChatEditingDeletedFileEntry extends AbstractChatEditingModifiedFile
 			acceptNearestChange: async () => { },
 			rejectNearestChange: async () => { },
 			toggleDiff: async () => { },
-			dispose: () => { }
+			dispose
 		};
 	}
 

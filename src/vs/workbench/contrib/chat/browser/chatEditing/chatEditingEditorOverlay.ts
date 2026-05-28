@@ -415,8 +415,14 @@ class ChatEditingOverlayController {
 
 			activeEditorSignal.read(r); // signal
 
-			const editor = group.activeEditorPane;
-			const uri = EditorResourceAccessor.getOriginalUri(editor?.input, { supportSideBySide: SideBySideEditor.PRIMARY });
+			const activeEditor = group.activeEditor;
+			const paneInput = group.activeEditorPane?.input;
+
+			if (activeEditor && (!paneInput || !activeEditor.matches(paneInput))) {
+				return undefined;
+			}
+
+			const uri = EditorResourceAccessor.getOriginalUri(activeEditor, { supportSideBySide: SideBySideEditor.PRIMARY });
 
 			return uri;
 		});
@@ -430,7 +436,8 @@ class ChatEditingOverlayController {
 				const entries = session.entries.read(r);
 				for (const entry of entries) {
 					if (entry.state.read(r) === ModifiedFileEntryState.Modified) {
-						modifiedUris.add(entry.modifiedURI.toString());
+						const targetUri = entry.isDeletion ? entry.originalURI : entry.modifiedURI;
+						modifiedUris.add(targetUri.toString());
 					}
 				}
 			}
@@ -465,7 +472,11 @@ class ChatEditingOverlayController {
 				if (!session.isGlobalEditingSession) {
 					continue;
 				}
-				const entry = session.readEntry(uri, r);
+				const entry = session.entries.read(r).find(e => {
+					if (e.modifiedURI.toString() === uri.toString()) { return true; }
+					if (e.isDeletion && e.originalURI?.toString() === uri.toString()) { return true; }
+					return false;
+				});
 				if (entry) {
 					data.push({ session, entry });
 				}

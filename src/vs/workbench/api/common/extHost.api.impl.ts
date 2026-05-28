@@ -1520,6 +1520,7 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 
 		// namespace: chat
 		const chat: typeof vscode.chat = {
+			ChatEditKind: extHostTypes.ChatEditKind,
 			ChatEditingFileState: extHostTypes.ChatEditingFileState,
 			ChatEditingSessionUserAction: extHostTypes.ChatEditingSessionUserAction,
 			startEditingSession(options?: vscode.chat.ChatEditingSessionOptions) {
@@ -1530,7 +1531,10 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 				checkProposedApiEnabled(extension, 'chatParticipantPrivate');
 				extHostChatEditing.setEditingEditorVisibility(visible);
 			},
-			get onDidUnclaimedUserAction() { return extHostChatEditing.onDidUnclaimedUserAction; },
+			get onDidUnclaimedUserAction() {
+				checkProposedApiEnabled(extension, 'chatParticipantPrivate');
+				return extHostChatEditing.onDidUnclaimedUserAction;
+			},
 			registerMappedEditsProvider(_selector: vscode.DocumentSelector, _provider: vscode.MappedEditsProvider) {
 				checkProposedApiEnabled(extension, 'mappedEditsProvider');
 				// no longer supported

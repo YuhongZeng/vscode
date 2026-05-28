@@ -29,7 +29,7 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IAgentSessionsService } from '../agentSessions/agentSessionsService.js';
 import { isChatViewTitleActionContext } from '../../common/actions/chatActions.js';
 import { ChatContextKeys } from '../../common/actions/chatContextKeys.js';
-import { applyingChatEditsFailedContextKey, hasAppliedChatEditsContextKey, hasUndecidedChatEditingResourceContextKey, IChatEditingService, IChatEditingSession, ModifiedFileEntryState } from '../../common/editing/chatEditingService.js';
+import { applyingChatEditsFailedContextKey, chatEditingResourceContextKey, chatEditingWidgetFileStateContextKey, CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME, decidedChatEditingResourceContextKey, hasAppliedChatEditsContextKey, hasUndecidedChatEditingResourceContextKey, IChatEditingService, IChatEditingSession, ModifiedFileEntryState } from '../../common/editing/chatEditingService.js';
 import { IChatService } from '../../common/chatService/chatService.js';
 import { isChatTreeItem, isRequestVM, isResponseVM } from '../../common/model/chatViewModel.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind } from '../../common/constants.js';
@@ -149,7 +149,7 @@ registerAction2(class AcceptAction extends WorkingSetAction {
 			id: 'chatEditing.acceptFile',
 			title: localize2('accept.file', 'Keep'),
 			icon: Codicon.check,
-			/* menu: [{
+			menu: [{
 				when: ContextKeyExpr.and(ContextKeyExpr.equals('resourceScheme', CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME), ContextKeyExpr.notIn(chatEditingResourceContextKey.key, decidedChatEditingResourceContextKey.key)),
 				id: MenuId.MultiDiffEditorFileToolbar,
 				order: 0,
@@ -159,7 +159,7 @@ registerAction2(class AcceptAction extends WorkingSetAction {
 				when: ContextKeyExpr.equals(chatEditingWidgetFileStateContextKey.key, ModifiedFileEntryState.Modified),
 				order: 0,
 				group: 'navigation'
-			}], */
+			}],
 		});
 	}
 
@@ -174,7 +174,7 @@ registerAction2(class DiscardAction extends WorkingSetAction {
 			id: 'chatEditing.discardFile',
 			title: localize2('discard.file', 'Undo'),
 			icon: Codicon.discard,
-			/* menu: [{
+			menu: [{
 				when: ContextKeyExpr.and(ContextKeyExpr.equals('resourceScheme', CHAT_EDITING_MULTI_DIFF_SOURCE_RESOLVER_SCHEME), ContextKeyExpr.notIn(chatEditingResourceContextKey.key, decidedChatEditingResourceContextKey.key)),
 				id: MenuId.MultiDiffEditorFileToolbar,
 				order: 2,
@@ -184,7 +184,7 @@ registerAction2(class DiscardAction extends WorkingSetAction {
 				when: ContextKeyExpr.equals(chatEditingWidgetFileStateContextKey.key, ModifiedFileEntryState.Modified),
 				order: 1,
 				group: 'navigation'
-			}], */
+			}],
 		});
 	}
 
