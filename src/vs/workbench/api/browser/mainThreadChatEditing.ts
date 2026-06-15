@@ -6,7 +6,7 @@
 import { combinedDisposable, Disposable, DisposableMap, IDisposable } from '../../../base/common/lifecycle.js';
 import { autorun } from '../../../base/common/observable.js';
 import { RunOnceScheduler } from '../../../base/common/async.js';
-import { ExtHostChatEditingShape, ExtHostContext, IApplyEditsResultDto, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
+import { ExtHostChatEditingShape, ExtHostContext, IApplyEditsResultDto, IWorkspaceEditDto, IWorkspaceTextEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../contrib/chat/common/chatService/chatService.js';
@@ -23,6 +23,7 @@ import { OffsetRange } from '../../../editor/common/core/ranges/offsetRange.js';
 import { Range } from '../../../editor/common/core/range.js';
 import { IWorkspaceFileEdit } from '../../../editor/common/languages.js';
 import { URI, UriComponents } from '../../../base/common/uri.js';
+import { IEditorWorkerService } from '../../../editor/common/services/editorWorker.js';
 
 @extHostNamedCustomer(MainContext.MainThreadChatEditing)
 export class MainThreadChatEditing extends Disposable implements MainThreadChatEditingShape {
@@ -39,7 +40,8 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		@IUriIdentityService private readonly _uriIdentityService: IUriIdentityService,
 		@ITextFileService private readonly _textFileService: ITextFileService,
 		@IFilesConfigurationService private readonly _filesConfigurationService: IFilesConfigurationService,
-		@IExtensionService private readonly _extensionService: IExtensionService
+		@IExtensionService private readonly _extensionService: IExtensionService,
+		@IEditorWorkerService private readonly _editorWorkerService: IEditorWorkerService
 	) {
 		super();
 		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostChatEditing);
@@ -194,6 +196,8 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				return { success: false, errorMessage: 'Failed to revive workspace edit' };
 			}
 
+			const appliedEdits = await this._computeAppliedEdits(editDto);
+
 			// Pre-flight check: ensure none of the files are read-only
 			const failedEdits: { uri: UriComponents; reason: string }[] = [];
 			for (const edit of edits.edits) {
@@ -319,12 +323,47 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 					failedEdits: saveFailedEdits
 				};
 			}
-			return { success: true };
+			return { success: true, appliedEdits };
 		} catch (err) {
 			if (err instanceof Error) {
 				return { success: false, errorMessage: err.message };
 			}
 			return { success: false, errorMessage: 'Unknown error occurred while applying edits' };
+		}
+	}
+
+	private async _computeAppliedEdits(editDto: IWorkspaceEditDto): Promise<IWorkspaceEditDto | undefined> {
+		try {
+			const result: IWorkspaceEditDto['edits'] = [];
+			const textEditsByResource = new Map<string, { resource: URI; textEdits: IWorkspaceTextEditDto[] }>();
+
+			for (const edit of editDto.edits) {
+				// eslint-disable-next-line local/code-no-in-operator
+				if ('textEdit' in edit) {
+					const resource = URI.revive(edit.resource);
+					const key = resource.toString();
+					let bucket = textEditsByResource.get(key);
+					if (!bucket) {
+						bucket = { resource, textEdits: [] };
+						textEditsByResource.set(key, bucket);
+					}
+					bucket.textEdits.push(edit);
+				} else {
+					result.push(edit);
+				}
+			}
+
+			for (const { resource, textEdits } of textEditsByResource.values()) {
+				const humanReadableEdits = await this._editorWorkerService.computeHumanReadableDiff(resource, textEdits.map(edit => edit.textEdit)) ?? textEdits.map(edit => edit.textEdit);
+				const versionId = textEdits[0]?.versionId;
+				for (const textEdit of humanReadableEdits) {
+					result.push({ resource, textEdit, versionId });
+				}
+			}
+
+			return result.length > 0 ? { edits: result } : undefined;
+		} catch {
+			return editDto;
 		}
 	}
 

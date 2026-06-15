@@ -5,7 +5,7 @@
 
 import type * as vscode from 'vscode';
 import { asArray, coalesce, isNonEmptyArray } from '../../../base/common/arrays.js';
-import { VSBuffer, encodeBase64 } from '../../../base/common/buffer.js';
+import { VSBuffer, decodeBase64, encodeBase64 } from '../../../base/common/buffer.js';
 import { IDataTransferFile, IDataTransferItem, UriList } from '../../../base/common/dataTransfer.js';
 import { createSingleCallFunction } from '../../../base/common/functional.js';
 import * as htmlContent from '../../../base/common/htmlContent.js';
@@ -613,6 +613,13 @@ export namespace TextEdit {
 
 export namespace WorkspaceEdit {
 
+	function reviveWorkspaceEditEntryMetadata(metadata: extHostProtocol.IWorkspaceEditEntryMetadataDto | undefined): vscode.WorkspaceEditEntryMetadata | undefined {
+		return metadata ? {
+			...metadata,
+			iconPath: IconPath.to(metadata.iconPath)
+		} : undefined;
+	}
+
 	export interface IVersionInformationProvider {
 		getTextDocumentVersion(uri: URI): number | undefined;
 		getNotebookDocumentVersion(uri: URI): number | undefined;
@@ -730,11 +737,35 @@ export namespace WorkspaceEdit {
 				}
 
 			} else {
-				result.renameFile(
-					URI.revive((<extHostProtocol.IWorkspaceFileEditDto>edit).oldResource!),
-					URI.revive((<extHostProtocol.IWorkspaceFileEditDto>edit).newResource!),
-					(<extHostProtocol.IWorkspaceFileEditDto>edit).options
-				);
+				const item = <extHostProtocol.IWorkspaceFileEditDto>edit;
+				const options = item.options ? {
+					...item.options,
+					contents: item.options.contents?.type === 'base64'
+						? decodeBase64(item.options.contents.value).buffer
+						: undefined
+				} : undefined;
+				const metadata = reviveWorkspaceEditEntryMetadata(item.metadata);
+
+				if (item.oldResource && item.newResource) {
+					result.renameFile(
+						URI.revive(item.oldResource),
+						URI.revive(item.newResource),
+						options,
+						metadata
+					);
+				} else if (item.newResource) {
+					result.createFile(
+						URI.revive(item.newResource),
+						options,
+						metadata
+					);
+				} else if (item.oldResource) {
+					result.deleteFile(
+						URI.revive(item.oldResource),
+						options,
+						metadata
+					);
+				}
 			}
 		}
 

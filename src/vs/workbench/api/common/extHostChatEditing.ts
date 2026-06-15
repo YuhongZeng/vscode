@@ -62,10 +62,13 @@ class ChatEditingSession extends Disposable implements vscode.chat.ChatEditingSe
 			reason: f.reason
 		}));
 
+		const appliedEdits = result.appliedEdits ? typeConvert.WorkspaceEdit.to(result.appliedEdits) : undefined;
+
 		return {
 			success: result.success,
 			errorMessage: result.errorMessage,
-			failedEdits
+			failedEdits,
+			appliedEdits
 		};
 	}
 

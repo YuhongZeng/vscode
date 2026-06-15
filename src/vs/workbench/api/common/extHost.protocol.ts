@@ -3399,6 +3399,7 @@ export interface IApplyEditsResultDto {
 	success: boolean;
 	errorMessage?: string;
 	failedEdits?: { uri: UriComponents; reason: string }[];
+	appliedEdits?: IWorkspaceEditDto;
 }
 
 export interface MainThreadChatEditingShape extends IDisposable {

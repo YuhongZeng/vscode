@@ -16,10 +16,19 @@ declare module 'vscode' {
 			Rejected = 2
 		}
 
+		/**
+		 * Represents the kind of a chat edit.
+		 */
+		export enum ChatEditKind {
+			Created = 0,
+			Modified = 1,
+			Deleted = 2
+		}
+
 		export interface ChatEditingFile {
 			readonly uri: Uri;
 			readonly state: ChatEditingFileState;
-			readonly isNew: boolean;
+			readonly kind: ChatEditKind;
 			readonly added: number;
 			readonly removed: number;
 		}
@@ -40,6 +49,11 @@ declare module 'vscode' {
 			 * A list of files that failed to apply or save.
 			 */
 			readonly failedEdits?: { readonly uri: Uri; readonly reason: string }[];
+			/**
+			 * The edits as normalized by the editor after the apply operation succeeds.
+			 * This can be used by extensions to mirror the IDE's edit grouping.
+			 */
+			readonly appliedEdits?: WorkspaceEdit;
 		}
 
 		export enum ChatEditingSessionUserAction {
