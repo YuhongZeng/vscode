@@ -23,14 +23,14 @@ suite('ChatEditingEditorActions', function () {
 		);
 	}
 
-	function navigateToAnchor(startLineNumbers: readonly number[], position: Position, next: boolean, owner?: object, lineCount?: number): string | undefined {
+	function navigateToAnchor(startLineNumbers: readonly number[], position: Position, next: boolean, owner?: object, lineCount?: number, resourceKey?: string): string | undefined {
 		const hunks = createDeleteOnlyHunks(startLineNumbers, lineCount);
-		const targetIndex = getChatEditNavigationTarget(hunks, position, next, owner);
+		const targetIndex = getChatEditNavigationTarget(hunks, position, next, owner, resourceKey);
 		if (targetIndex === undefined) {
 			return undefined;
 		}
 		if (owner) {
-			setRememberedChatEditAnchor(owner, hunks[targetIndex]);
+			setRememberedChatEditAnchor(owner, hunks[targetIndex], resourceKey);
 		}
 		return getChatEditAnchorPositions(hunks)[targetIndex].toString();
 	}
@@ -69,6 +69,17 @@ suite('ChatEditingEditorActions', function () {
 			'(3,5)',
 			'(1,1)',
 			'(3,5)',
+		]);
+	});
+
+	test('remembered anchors are scoped to the current resource', function () {
+		const owner = {};
+		assert.deepStrictEqual([
+			navigateToAnchor([1, 2, 4, 5], new Position(2, 2), true, owner, 3, 'file:///a.ts'),
+			navigateToAnchor([1, 2, 4, 5], new Position(3, 5), true, owner, 3, 'file:///b.ts'),
+		], [
+			'(3,5)',
+			'(1,1)',
 		]);
 	});
 });

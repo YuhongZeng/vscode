@@ -18,13 +18,25 @@ export interface IChatEditNavigationHunk {
 
 type ICursorPositionResolver = Pick<ITextModel, 'getLineCount' | 'getLineMaxColumn'>;
 
-const rememberedAnchorIndices = new WeakMap<object, { anchorIndex: number; position: Position }>();
+interface IRememberedChatEditAnchor {
+	readonly anchorIdentity: string;
+	readonly position: Position;
+	readonly resourceKey: string | undefined;
+}
+
+// Delete-only hunks can collapse onto the same cursor position, so remember
+// which synthetic anchor the user most recently navigated to at that location.
+// WeakMap keeps this tied to the editor owner lifetime and does not retain
+// disposed editors on its own.
+const rememberedAnchorIndices = new WeakMap<object, IRememberedChatEditAnchor>();
 
 export function toChatEditRange(modifiedRange: LineRange): Range | null {
 	if (!modifiedRange.isEmpty) {
 		return modifiedRange.toInclusiveRange();
 	}
 
+	// A delete-only hunk has no remaining lines to reveal, so expose the gap that
+	// still exists in the editor after the deletion.
 	if (modifiedRange.startLineNumber === 1) {
 		return new Range(1, 1, 1, 1);
 	}
@@ -79,17 +91,31 @@ export function createChatEditNavigationHunks(modifiedRanges: readonly LineRange
 	}));
 }
 
-export function setRememberedChatEditAnchor(owner: object, hunk: IChatEditNavigationHunk): void {
-	rememberedAnchorIndices.set(owner, { anchorIndex: hunk.anchorIndex, position: hunk.cursorPosition });
+export function setRememberedChatEditAnchor(owner: object, hunk: IChatEditNavigationHunk, resourceKey?: string): void {
+	rememberedAnchorIndices.set(owner, {
+		anchorIdentity: getChatEditAnchorIdentity(hunk),
+		position: hunk.cursorPosition,
+		resourceKey,
+	});
 }
 
 export function clearRememberedChatEditAnchor(owner: object): void {
 	rememberedAnchorIndices.delete(owner);
 }
 
-export function getRememberedChatEditAnchorIndex(owner: object, position: Position): number | undefined {
+export function getRememberedChatEditAnchorIndex(owner: object, hunks: readonly IChatEditNavigationHunk[], position: Position, resourceKey?: string): number | undefined {
 	const remembered = rememberedAnchorIndices.get(owner);
-	return remembered && Position.equals(remembered.position, position) ? remembered.anchorIndex : undefined;
+	if (!remembered || !Position.equals(remembered.position, position) || remembered.resourceKey !== resourceKey) {
+		return undefined;
+	}
+
+	for (const hunk of hunks) {
+		if (Position.equals(hunk.cursorPosition, position) && getChatEditAnchorIdentity(hunk) === remembered.anchorIdentity) {
+			return hunk.anchorIndex;
+		}
+	}
+
+	return undefined;
 }
 
 export function getChatEditAnchorPositions(hunks: readonly IChatEditNavigationHunk[]): Position[] {
@@ -101,6 +127,8 @@ function toChatEditCursorPosition(modifiedRange: LineRange, resolver?: ICursorPo
 		return new Position(modifiedRange.startLineNumber, 1);
 	}
 
+	// Keep deletions navigable by anchoring them to a stable cursor position even
+	// though the deleted lines no longer exist in the modified document.
 	if (modifiedRange.startLineNumber <= 1) {
 		return new Position(1, 1);
 	}
@@ -113,12 +141,27 @@ function toChatEditCursorPosition(modifiedRange: LineRange, resolver?: ICursorPo
 	return new Position(modifiedRange.startLineNumber, 1);
 }
 
-function getRememberedAnchorIndex(hunks: readonly IChatEditNavigationHunk[], position: Position, owner: object | undefined, matchingIndices: readonly number[]): number | undefined {
+function getChatEditAnchorIdentity(hunk: IChatEditNavigationHunk): string {
+	const { modifiedRange, revealRange, cursorPosition, isDeleteOnly } = hunk;
+	return [
+		modifiedRange.startLineNumber,
+		modifiedRange.endLineNumberExclusive,
+		revealRange.startLineNumber,
+		revealRange.startColumn,
+		revealRange.endLineNumber,
+		revealRange.endColumn,
+		cursorPosition.lineNumber,
+		cursorPosition.column,
+		isDeleteOnly ? 1 : 0,
+	].join(':');
+}
+
+function getRememberedAnchorIndex(hunks: readonly IChatEditNavigationHunk[], position: Position, owner: object | undefined, matchingIndices: readonly number[], resourceKey?: string): number | undefined {
 	if (!owner) {
 		return undefined;
 	}
 
-	const rememberedAnchorIndex = getRememberedChatEditAnchorIndex(owner, position);
+	const rememberedAnchorIndex = getRememberedChatEditAnchorIndex(owner, hunks, position, resourceKey);
 	if (rememberedAnchorIndex === undefined) {
 		return undefined;
 	}
@@ -138,14 +181,16 @@ function getMatchingAnchorIndices(hunks: readonly IChatEditNavigationHunk[], pos
 	return matchingIndices;
 }
 
-export function getChatEditOverlayActiveIndex(hunks: readonly IChatEditNavigationHunk[], position: Position, owner?: object): number {
+export function getChatEditOverlayActiveIndex(hunks: readonly IChatEditNavigationHunk[], position: Position, owner?: object, resourceKey?: string): number {
 	if (hunks.length === 0) {
 		return -1;
 	}
 
 	const matchingIndices = getMatchingAnchorIndices(hunks, position);
 	if (matchingIndices.length > 0) {
-		return getRememberedAnchorIndex(hunks, position, owner, matchingIndices) ?? matchingIndices[matchingIndices.length - 1];
+		// Multiple delete-only hunks may share one anchor position. Prefer the last
+		// remembered anchor there so the overlay stays on the hunk the user picked.
+		return getRememberedAnchorIndex(hunks, position, owner, matchingIndices, resourceKey) ?? matchingIndices[matchingIndices.length - 1];
 	}
 
 	let containingIndex = -1;

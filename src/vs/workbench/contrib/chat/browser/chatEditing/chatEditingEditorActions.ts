@@ -153,16 +153,17 @@ abstract class NavigateAction extends ChatEditingEditorAction {
 		const entry = session.getEntry(uri)!;
 		const diffInfo = await entry.getDiffInfo?.();
 		const hunks = diffInfo ? createChatEditNavigationHunks(diffInfo.changes.map(change => change.modified), codeEditor.getModel() ?? undefined) : [];
+		const resourceKey = codeEditor.getModel()?.uri.toString();
 
 		if (hunks.length === 0) {
 			clearRememberedChatEditAnchor(codeEditor);
 			return;
 		}
 
-		const targetIndex = getChatEditNavigationTarget(hunks, position, this.next, codeEditor);
+		const targetIndex = getChatEditNavigationTarget(hunks, position, this.next, codeEditor, resourceKey);
 		if (targetIndex !== undefined) {
 			const targetHunk = hunks[targetIndex];
-			setRememberedChatEditAnchor(codeEditor, targetHunk);
+			setRememberedChatEditAnchor(codeEditor, targetHunk, resourceKey);
 			codeEditor.setPosition(targetHunk.cursorPosition);
 			codeEditor.revealRangeInCenter(targetHunk.revealRange);
 			codeEditor.focus();
@@ -175,7 +176,7 @@ abstract class NavigateAction extends ChatEditingEditorAction {
 	}
 }
 
-export function getChatEditNavigationTarget(hunks: readonly IChatEditNavigationHunk[], position: Position, next: boolean, owner?: object): number | undefined {
+export function getChatEditNavigationTarget(hunks: readonly IChatEditNavigationHunk[], position: Position, next: boolean, owner?: object, resourceKey?: string): number | undefined {
 	if (hunks.length === 0) {
 		return undefined;
 	}
@@ -189,9 +190,11 @@ export function getChatEditNavigationTarget(hunks: readonly IChatEditNavigationH
 	}
 
 	if (exactIndices.length > 0) {
+		// Delete-only hunks can resolve to the same anchor position, so continue
+		// from the remembered synthetic anchor when the cursor sits on that spot.
 		let activeIndex = exactIndices[exactIndices.length - 1];
 		if (owner) {
-			const rememberedIndex = exactIndices.find(index => index === getRememberedChatEditAnchorIndex(owner, position));
+			const rememberedIndex = exactIndices.find(index => index === getRememberedChatEditAnchorIndex(owner, hunks, position, resourceKey));
 			if (rememberedIndex !== undefined) {
 				activeIndex = rememberedIndex;
 			}

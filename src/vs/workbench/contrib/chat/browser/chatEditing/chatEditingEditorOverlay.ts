@@ -515,6 +515,7 @@ class ChatEditingOverlayController {
 
 					const control = group.activeEditorPane?.getControl();
 					const model = isCodeEditor(control) ? control.getModel() ?? undefined : undefined;
+					const resourceKey = model?.uri.toString();
 					const allChanges: IChatEditNavigationHunk[] = [];
 					const seenUris = new ResourceSet();
 					for (const { entry } of data) {
@@ -536,7 +537,7 @@ class ChatEditingOverlayController {
 						return -1;
 					}
 
-					return getChatEditOverlayActiveIndex(allChanges, position, isCodeEditor(control) ? control : undefined);
+					return getChatEditOverlayActiveIndex(allChanges, position, isCodeEditor(control) ? control : undefined, resourceKey);
 				});
 
 				widget.show(data, changeIndex, fileNavigation);

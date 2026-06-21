@@ -40,15 +40,22 @@ suite('ChatEditingEditorOverlay', function () {
 	test('overlay sequence stays stable when multiple delete-only anchors share the same cursor position', function () {
 		const owner = {};
 		const hunks = createDeleteOnlyHunks([1, 2, 4, 5], 3);
-		setRememberedChatEditAnchor(owner, hunks[2]);
+		setRememberedChatEditAnchor(owner, hunks[2], 'file:///a.ts');
 		assert.deepStrictEqual([
-			getChatEditOverlayActiveIndex(hunks, new Position(3, 5), owner),
-			(setRememberedChatEditAnchor(owner, hunks[3]), getChatEditOverlayActiveIndex(hunks, new Position(3, 5), owner)),
-			getChatEditOverlayActiveIndex(hunks, new Position(2, 2), owner),
+			getChatEditOverlayActiveIndex(hunks, new Position(3, 5), owner, 'file:///a.ts'),
+			(setRememberedChatEditAnchor(owner, hunks[3], 'file:///a.ts'), getChatEditOverlayActiveIndex(hunks, new Position(3, 5), owner, 'file:///a.ts')),
+			getChatEditOverlayActiveIndex(hunks, new Position(2, 2), owner, 'file:///a.ts'),
 		], [
 			2,
 			3,
 			1,
 		]);
+	});
+
+	test('overlay ignores remembered anchors from another resource', function () {
+		const owner = {};
+		const hunks = createDeleteOnlyHunks([1, 2, 4, 5], 3);
+		setRememberedChatEditAnchor(owner, hunks[2], 'file:///a.ts');
+		assert.strictEqual(getChatEditOverlayActiveIndex(hunks, new Position(3, 5), owner, 'file:///b.ts'), 3);
 	});
 });
