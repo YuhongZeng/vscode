@@ -195,6 +195,14 @@ import { MAX_ZOOM_LEVEL, MIN_ZOOM_LEVEL } from '../../platform/window/electron-b
 				'scope': ConfigurationScope.APPLICATION,
 				'description': localize('restoreFullscreen', "Controls whether a window should restore to full screen mode if it was exited in full screen mode.")
 			},
+			'window.experimental.blackScreenRecovery': {
+				'type': 'string',
+				'enum': ['off', 'diagnose', 'visibility-pulse', 'native-occlusion-off', 'renderer-backgrounding-off', 'bounds-nudge', 'aggressive'],
+				'default': 'diagnose',
+				'scope': ConfigurationScope.APPLICATION,
+				'tags': ['experimental'],
+				'markdownDescription': localize('window.experimental.blackScreenRecovery', "Experimental Windows black screen diagnosis and recovery strategy. The default `diagnose` mode records low-intrusion window, renderer, capture, GPU, and GPUCache diagnostics to an automatically created per-launch log directory. Runtime strategies such as `visibility-pulse`, `bounds-nudge`, and `aggressive` apply to newly opened windows. Startup switch strategies such as `native-occlusion-off` and `renderer-backgrounding-off` require `--black-screen-recovery`, `CODEARTS_BLACK_SCREEN_RECOVERY`, or `argv.json` and a full restart to affect Chromium startup.")
+			},
 			'window.zoomLevel': {
 				'type': 'number',
 				'default': 0,

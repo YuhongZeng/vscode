@@ -202,6 +202,7 @@ export const OPTIONS: OptionDescriptions<Required<NativeParsedArgs>> = {
 	'unresponsive-sample-interval': { type: 'string' },
 	'unresponsive-sample-period': { type: 'string' },
 	'enable-rdp-display-tracking': { type: 'boolean' },
+	'black-screen-recovery': { type: 'string' },
 	'disable-layout-restore': { type: 'boolean' },
 	'disable-experiments': { type: 'boolean' },
 

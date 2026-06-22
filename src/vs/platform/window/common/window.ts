@@ -209,8 +209,13 @@ export interface IWindowSettings {
 	readonly closeWhenEmpty: boolean;
 	readonly clickThroughInactive: boolean;
 	readonly newWindowProfile: string;
+	readonly experimental?: IWindowExperimentalSettings;
 	readonly density: IDensitySettings;
 	readonly border: 'off' | 'default' | 'system' | string /* color in RGB or other formats */;
+}
+
+export interface IWindowExperimentalSettings {
+	readonly blackScreenRecovery?: 'off' | 'diagnose' | 'visibility-pulse' | 'native-occlusion-off' | 'renderer-backgrounding-off' | 'bounds-nudge' | 'aggressive';
 }
 
 export interface IDensitySettings {

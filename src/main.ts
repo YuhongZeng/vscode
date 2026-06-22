@@ -36,6 +36,7 @@ const portable = configurePortable(product);
 const args = parseCLIArgs();
 // Configure static command line arguments
 const argvConfig = configureCommandlineSwitchesSync(args);
+configureBlackScreenRecoverySwitchesSync();
 // Enable sandbox globally unless
 // 1) disabled via command line using either
 //    `--no-sandbox` or `--disable-chromium-sandbox` argument.
@@ -252,6 +253,9 @@ function configureCommandlineSwitchesSync(cliArgs: NativeParsedArgs) {
 
 		// Enables display tracking to restore maximized windows under RDP: https://github.com/electron/electron/issues/47016
 		'enable-rdp-display-tracking',
+
+		// Experimental Windows black screen diagnosis/recovery strategy.
+		'black-screen-recovery',
 	];
 
 	// Read argv config
@@ -313,6 +317,12 @@ function configureCommandlineSwitchesSync(cliArgs: NativeParsedArgs) {
 				case 'enable-rdp-display-tracking':
 					if (argvValue) {
 						process.argv.push('--enable-rdp-display-tracking');
+					}
+					break;
+
+				case 'black-screen-recovery':
+					if (typeof argvValue === 'string') {
+						process.argv.push('--black-screen-recovery', argvValue);
 					}
 					break;
 			}
@@ -377,6 +387,7 @@ interface IArgvConfig {
 	readonly 'disable-chromium-sandbox'?: boolean;
 	readonly 'use-inmemory-secretstorage'?: boolean;
 	readonly 'enable-rdp-display-tracking'?: boolean;
+	readonly 'black-screen-recovery'?: string;
 	readonly 'remote-debugging-port'?: string;
 }
 
@@ -447,6 +458,43 @@ function getArgvConfigPath(): string {
 	}
 
 	return path.join(os.homedir(), dataFolderName!, 'argv.json');
+}
+
+function configureBlackScreenRecoverySwitchesSync(): void {
+	if (process.platform !== 'win32') {
+		return;
+	}
+
+	const strategy = getBlackScreenRecoveryStrategyArg()
+		|| process.env['CODEARTS_BLACK_SCREEN_RECOVERY']
+		|| process.env['VSCODE_BLACK_SCREEN_RECOVERY']
+		|| 'off';
+
+	if (strategy === 'native-occlusion-off' || strategy === 'aggressive') {
+		const current = app.commandLine.getSwitchValue('disable-features');
+		const features = new Set(current.split(',').map(value => value.trim()).filter(Boolean));
+		features.add('CalculateNativeWinOcclusion');
+		app.commandLine.appendSwitch('disable-features', Array.from(features).join(','));
+	}
+
+	if (strategy === 'renderer-backgrounding-off') {
+		app.commandLine.appendSwitch('disable-renderer-backgrounding');
+	}
+}
+
+function getBlackScreenRecoveryStrategyArg(): string | undefined {
+	for (let i = 0; i < process.argv.length; i++) {
+		const arg = process.argv[i];
+		const match = arg.match(/^--black-screen-recovery=(.+)$/);
+		if (match) {
+			return match[1];
+		}
+		if (arg === '--black-screen-recovery') {
+			return process.argv[i + 1];
+		}
+	}
+
+	return undefined;
 }
 
 function configureCrashReporter(): void {

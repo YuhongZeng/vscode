@@ -140,6 +140,7 @@ export interface NativeParsedArgs {
 	'unresponsive-sample-interval'?: string;
 	'unresponsive-sample-period'?: string;
 	'enable-rdp-display-tracking'?: boolean;
+	'black-screen-recovery'?: string;
 	'disable-layout-restore'?: boolean;
 	'disable-experiments'?: boolean;
 

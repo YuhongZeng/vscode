@@ -74,6 +74,7 @@ import { FileUserDataProvider } from '../../platform/userData/common/fileUserDat
 import { addUNCHostToAllowlist, getUNCHost } from '../../base/node/unc.js';
 import { ThemeMainService } from '../../platform/theme/electron-main/themeMainServiceImpl.js';
 import { LINUX_SYSTEM_POLICY_FILE_PATH } from '../../base/common/policy.js';
+import { applyBlackScreenRecoveryStartupSwitches } from '../../platform/windows/electron-main/blackScreenRecovery.js';
 
 /**
  * The main VS Code entry point.
@@ -99,6 +100,8 @@ class CodeMain {
 		// Set the error handler early enough so that we are not getting the
 		// default electron error dialog popping up
 		setUnexpectedErrorHandler(err => console.error(err));
+
+		applyBlackScreenRecoveryStartupSwitches();
 
 		// Create services
 		const [instantiationService, instanceEnvironment, environmentMainService, configurationService, stateMainService, bufferLogger, productService, userDataProfilesMainService] = this.createServices();
