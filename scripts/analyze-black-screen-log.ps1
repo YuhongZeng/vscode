@@ -140,6 +140,9 @@ $eventCounts = $events | Group-Object event | Sort-Object Count -Descending | Se
 $firstEvent = $events | Select-Object -First 1
 $lastEvent = $events | Select-Object -Last 1
 $startup = Get-LastEvent $events "blackScreenRecovery.startupSwitches"
+$windowHook = Get-LastEvent $events "blackScreenRecovery.windowHook"
+$installAttempt = Get-LastEvent $events "blackScreenRecovery.installAttempt"
+$installSkipped = Get-LastEvent $events "blackScreenRecovery.installSkipped"
 $installed = Get-LastEvent $events "blackScreenRecovery.installed"
 $gpuInfo = Get-LastEvent $events "blackScreenRecovery.gpuInfoComplete"
 $captureHits = Select-Events $events "blackScreenRecovery.captureBlackHit"
@@ -186,8 +189,13 @@ $summary = [ordered]@{
 	firstTime = $firstEvent.time
 	lastTime = $lastEvent.time
 	parseErrorCount = $read.parseErrors.Count
+	windowHookCount = (Select-Events $events "blackScreenRecovery.windowHook").Count
+	installAttemptCount = (Select-Events $events "blackScreenRecovery.installAttempt").Count
+	installSkippedCount = (Select-Events $events "blackScreenRecovery.installSkipped").Count
 	strategy = Get-DataValue $installed.data "strategy"
 	startupStrategy = Get-DataValue $startup.data "strategy"
+	installAttemptStrategy = Get-DataValue $installAttempt.data "strategy"
+	installSkippedReason = Get-DataValue $installSkipped.data "reason"
 	captureBlackHitCount = $captureHits.Count
 	blackSampleCount = $blackSamples.Count
 	highBlackSampleCount = $highBlackSamples.Count
@@ -224,6 +232,9 @@ Write-Host ""
 Write-Host "== Strategy =="
 Write-Host "Installed strategy: $(Format-Value (Get-DataValue $installed.data 'strategy'))"
 Write-Host "Startup strategy:   $(Format-Value (Get-DataValue $startup.data 'strategy'))"
+Write-Host "Hook resolution:    $(Format-Value (Get-DataValue $windowHook.data 'resolution'))"
+Write-Host "Install attempt:    $(Format-Value (Get-DataValue $installAttempt.data 'strategyResolution'))"
+Write-Host "Install skipped:    $(Format-Value (Get-DataValue $installSkipped.data 'reason'))"
 Write-Host "Disable features:   $(Format-Value (Get-DataValue $startup.data 'disableFeaturesAfter'))"
 Write-Host "Renderer bg off:    $(Format-Value (Get-DataValue $startup.data 'rendererBackgroundingDisabled'))"
 Write-Host ""
@@ -232,6 +243,9 @@ Write-Host "== Event Counts =="
 $eventCounts | Format-Table -AutoSize | Out-String | Write-Host
 
 Write-Host "== Key Findings =="
+Write-Host "windowHook events:          $((Select-Events $events 'blackScreenRecovery.windowHook').Count)"
+Write-Host "installAttempt events:      $((Select-Events $events 'blackScreenRecovery.installAttempt').Count)"
+Write-Host "installSkipped events:      $((Select-Events $events 'blackScreenRecovery.installSkipped').Count)"
 Write-Host "captureBlackHit events:      $($captureHits.Count)"
 Write-Host "sample capture.isBlack=true: $($blackSamples.Count)"
 Write-Host "sample blackRatio >= 0.5:    $($highBlackSamples.Count)"
@@ -325,6 +339,16 @@ if ($ShowRawHits -and $captureHits.Count -gt 0) {
 }
 
 Write-Host "== Quick Interpretation =="
+if (-not $windowHook) {
+	Write-Host "- No windowHook event was found. The early module loaded, but this build likely did not execute the patched BrowserWindow setWin hook. Patch the actual BrowserWindow creation path in the internal base."
+} elseif (-not $installAttempt) {
+	Write-Host "- windowHook exists but installAttempt is missing. Check the call from windowImpl.ts to installBlackScreenRecoveryProbe and any internal merge differences."
+} elseif ($installSkipped) {
+	Write-Host "- The window probe was skipped. Inspect installSkipped.reason and strategyResolution above."
+} elseif (-not $installed) {
+	Write-Host "- installAttempt exists but installed is missing. Check for an install-time exception or a build mismatch around blackScreenRecovery.ts."
+}
+
 if ($captureHits.Count -gt 0 -or $blackSamples.Count -gt 0) {
 	Write-Host "- Internal capturePage observed black content. Prioritize Chromium compositor/Viz/Skia/GPUCache layers."
 } else {

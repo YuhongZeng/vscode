@@ -18,6 +18,17 @@ export type BlackScreenRecoveryStrategy =
 	| 'bounds-nudge'
 	| 'aggressive';
 
+type BlackScreenRecoveryStrategySource = 'argv' | 'codearts-env' | 'vscode-env' | 'setting' | 'default';
+
+interface IBlackScreenRecoveryStrategyResolution {
+	readonly strategy: BlackScreenRecoveryStrategy;
+	readonly source: BlackScreenRecoveryStrategySource;
+	readonly raw: string;
+	readonly configuredStrategy: string | undefined;
+	readonly configuredStrategyIgnored: boolean;
+	readonly configuredStrategyIgnoredReason: string | undefined;
+}
+
 const validStrategies = new Set<string>([
 	'off',
 	'diagnose',
@@ -37,22 +48,45 @@ let installedStartupSwitches = false;
 let probeRunDirectory: string | undefined;
 
 export function getBlackScreenRecoveryStrategy(): BlackScreenRecoveryStrategy {
-	return normalizeBlackScreenRecoveryStrategy(
-		getBlackScreenRecoveryStrategyArg()
-		|| process.env['CODEARTS_BLACK_SCREEN_RECOVERY']
-		|| process.env['VSCODE_BLACK_SCREEN_RECOVERY']
-		|| 'diagnose'
-	);
+	return resolveBlackScreenRecoveryStrategy(undefined).strategy;
 }
 
 export function getConfiguredBlackScreenRecoveryStrategy(configuredStrategy: string | undefined): BlackScreenRecoveryStrategy {
-	return normalizeBlackScreenRecoveryStrategy(
-		getBlackScreenRecoveryStrategyArg()
-		|| process.env['CODEARTS_BLACK_SCREEN_RECOVERY']
-		|| process.env['VSCODE_BLACK_SCREEN_RECOVERY']
-		|| configuredStrategy
-		|| 'diagnose'
-	);
+	return resolveBlackScreenRecoveryStrategy(configuredStrategy).strategy;
+}
+
+function resolveBlackScreenRecoveryStrategy(configuredStrategy: string | undefined): IBlackScreenRecoveryStrategyResolution {
+	const explicitStrategy = getExplicitBlackScreenRecoveryStrategy();
+	if (explicitStrategy) {
+		return {
+			strategy: normalizeBlackScreenRecoveryStrategy(explicitStrategy.raw),
+			source: explicitStrategy.source,
+			raw: explicitStrategy.raw,
+			configuredStrategy,
+			configuredStrategyIgnored: false,
+			configuredStrategyIgnoredReason: undefined
+		};
+	}
+
+	if (configuredStrategy && configuredStrategy !== 'off') {
+		return {
+			strategy: normalizeBlackScreenRecoveryStrategy(configuredStrategy),
+			source: 'setting',
+			raw: configuredStrategy,
+			configuredStrategy,
+			configuredStrategyIgnored: false,
+			configuredStrategyIgnoredReason: undefined
+		};
+	}
+
+	return {
+		strategy: 'diagnose',
+		source: 'default',
+		raw: 'diagnose',
+		configuredStrategy,
+		configuredStrategyIgnored: configuredStrategy === 'off',
+		configuredStrategyIgnoredReason: configuredStrategy === 'off' ? 'settingOffDoesNotDisableDefaultDiagnosticBuild' : undefined
+	};
 }
 
 function normalizeBlackScreenRecoveryStrategy(raw: string): BlackScreenRecoveryStrategy {
@@ -62,6 +96,25 @@ function normalizeBlackScreenRecoveryStrategy(raw: string): BlackScreenRecoveryS
 
 	writeBlackScreenEvent('blackScreenRecovery.invalidStrategy', { raw });
 	return 'off';
+}
+
+function getExplicitBlackScreenRecoveryStrategy(): { raw: string; source: BlackScreenRecoveryStrategySource } | undefined {
+	const arg = getBlackScreenRecoveryStrategyArg();
+	if (arg) {
+		return { raw: arg, source: 'argv' };
+	}
+
+	const codeArtsEnv = process.env['CODEARTS_BLACK_SCREEN_RECOVERY'];
+	if (codeArtsEnv) {
+		return { raw: codeArtsEnv, source: 'codearts-env' };
+	}
+
+	const vscodeEnv = process.env['VSCODE_BLACK_SCREEN_RECOVERY'];
+	if (vscodeEnv) {
+		return { raw: vscodeEnv, source: 'vscode-env' };
+	}
+
+	return undefined;
 }
 
 function getBlackScreenRecoveryStrategyArg(): string | undefined {
@@ -111,9 +164,36 @@ export function applyBlackScreenRecoveryStartupSwitches(strategy = getBlackScree
 	});
 }
 
+export function logBlackScreenRecoveryWindowHook(label: string, configuredStrategy?: string): void {
+	writeBlackScreenEvent('blackScreenRecovery.windowHook', {
+		label,
+		isWindows,
+		configuredStrategy,
+		resolution: resolveBlackScreenRecoveryStrategy(configuredStrategy)
+	});
+}
+
 export function installBlackScreenRecoveryProbe(win: BrowserWindow, label = 'main', configuredStrategy?: string): void {
-	const strategy = getConfiguredBlackScreenRecoveryStrategy(configuredStrategy);
+	const strategyResolution = resolveBlackScreenRecoveryStrategy(configuredStrategy);
+	const strategy = strategyResolution.strategy;
+
+	writeBlackScreenEvent('blackScreenRecovery.installAttempt', {
+		label,
+		isWindows,
+		strategy,
+		strategyResolution,
+		window: getWindowSnapshot(win),
+		display: getDisplaySnapshot(win)
+	});
+
 	if (strategy === 'off' || !isWindows) {
+		writeBlackScreenEvent('blackScreenRecovery.installSkipped', {
+			label,
+			isWindows,
+			strategy,
+			strategyResolution,
+			reason: strategy === 'off' ? 'strategyOff' : 'notWindows'
+		});
 		return;
 	}
 

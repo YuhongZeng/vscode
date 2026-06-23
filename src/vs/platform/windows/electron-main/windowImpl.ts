@@ -46,7 +46,7 @@ import { IInstantiationService } from '../../instantiation/common/instantiation.
 import { VSBuffer } from '../../../base/common/buffer.js';
 import { errorHandler } from '../../../base/common/errors.js';
 import { FocusMode } from '../../native/common/native.js';
-import { installBlackScreenRecoveryProbe } from './blackScreenRecovery.js';
+import { installBlackScreenRecoveryProbe, logBlackScreenRecoveryWindowHook } from './blackScreenRecovery.js';
 
 export interface IWindowCreationOptions {
 	readonly state: IWindowState;
@@ -146,7 +146,9 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 	get win() { return this._win; }
 	protected setWin(win: electron.BrowserWindow, options?: BrowserWindowConstructorOptions): void {
 		this._win = win;
-		installBlackScreenRecoveryProbe(win, `window:${this.id}`, this.configurationService.getValue<IWindowSettings | undefined>('window')?.experimental?.blackScreenRecovery);
+		const blackScreenRecoveryStrategy = this.configurationService.getValue<IWindowSettings | undefined>('window')?.experimental?.blackScreenRecovery;
+		logBlackScreenRecoveryWindowHook(`window:${this.id}`, blackScreenRecoveryStrategy);
+		installBlackScreenRecoveryProbe(win, `window:${this.id}`, blackScreenRecoveryStrategy);
 
 		// Window Events
 		this._register(Event.fromNodeEventEmitter(win, 'maximize')(() => {
