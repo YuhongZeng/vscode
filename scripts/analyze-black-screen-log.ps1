@@ -140,6 +140,8 @@ $eventCounts = $events | Group-Object event | Sort-Object Count -Descending | Se
 $firstEvent = $events | Select-Object -First 1
 $lastEvent = $events | Select-Object -Last 1
 $startup = Get-LastEvent $events "blackScreenRecovery.startupSwitches"
+$appWindowHook = Get-LastEvent $events "blackScreenRecovery.appWindowHook.installed"
+$appWindowCreated = Get-LastEvent $events "blackScreenRecovery.appWindowCreated"
 $windowHook = Get-LastEvent $events "blackScreenRecovery.windowHook"
 $installAttempt = Get-LastEvent $events "blackScreenRecovery.installAttempt"
 $installSkipped = Get-LastEvent $events "blackScreenRecovery.installSkipped"
@@ -189,6 +191,8 @@ $summary = [ordered]@{
 	firstTime = $firstEvent.time
 	lastTime = $lastEvent.time
 	parseErrorCount = $read.parseErrors.Count
+	appWindowHookCount = (Select-Events $events "blackScreenRecovery.appWindowHook.installed").Count
+	appWindowCreatedCount = (Select-Events $events "blackScreenRecovery.appWindowCreated").Count
 	windowHookCount = (Select-Events $events "blackScreenRecovery.windowHook").Count
 	installAttemptCount = (Select-Events $events "blackScreenRecovery.installAttempt").Count
 	installSkippedCount = (Select-Events $events "blackScreenRecovery.installSkipped").Count
@@ -232,6 +236,7 @@ Write-Host ""
 Write-Host "== Strategy =="
 Write-Host "Installed strategy: $(Format-Value (Get-DataValue $installed.data 'strategy'))"
 Write-Host "Startup strategy:   $(Format-Value (Get-DataValue $startup.data 'strategy'))"
+Write-Host "App hook strategy:  $(Format-Value (Get-DataValue $appWindowHook.data 'startupStrategy'))"
 Write-Host "Hook resolution:    $(Format-Value (Get-DataValue $windowHook.data 'resolution'))"
 Write-Host "Install attempt:    $(Format-Value (Get-DataValue $installAttempt.data 'strategyResolution'))"
 Write-Host "Install skipped:    $(Format-Value (Get-DataValue $installSkipped.data 'reason'))"
@@ -243,6 +248,8 @@ Write-Host "== Event Counts =="
 $eventCounts | Format-Table -AutoSize | Out-String | Write-Host
 
 Write-Host "== Key Findings =="
+Write-Host "appWindowHook events:      $((Select-Events $events 'blackScreenRecovery.appWindowHook.installed').Count)"
+Write-Host "appWindowCreated events:   $((Select-Events $events 'blackScreenRecovery.appWindowCreated').Count)"
 Write-Host "windowHook events:          $((Select-Events $events 'blackScreenRecovery.windowHook').Count)"
 Write-Host "installAttempt events:      $((Select-Events $events 'blackScreenRecovery.installAttempt').Count)"
 Write-Host "installSkipped events:      $((Select-Events $events 'blackScreenRecovery.installSkipped').Count)"
@@ -339,8 +346,14 @@ if ($ShowRawHits -and $captureHits.Count -gt 0) {
 }
 
 Write-Host "== Quick Interpretation =="
+if (-not $appWindowHook) {
+	Write-Host "- No appWindowHook event was found. The early module loaded, but the packaged startup path may not include the current startup hook build."
+} elseif (-not $appWindowCreated) {
+	Write-Host "- appWindowHook exists but no appWindowCreated event was found. Check whether this log belongs to the same main process that created the visible window."
+}
+
 if (-not $windowHook) {
-	Write-Host "- No windowHook event was found. The early module loaded, but this build likely did not execute the patched BrowserWindow setWin hook. Patch the actual BrowserWindow creation path in the internal base."
+	Write-Host "- No windowHook event was found. The early module loaded, but this build likely did not execute the patched BaseWindow.setWin hook. The app-level BrowserWindow hook should still install the probe if appWindowCreated exists."
 } elseif (-not $installAttempt) {
 	Write-Host "- windowHook exists but installAttempt is missing. Check the call from windowImpl.ts to installBlackScreenRecoveryProbe and any internal merge differences."
 } elseif ($installSkipped) {

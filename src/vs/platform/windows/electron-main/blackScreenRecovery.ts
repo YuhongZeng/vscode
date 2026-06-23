@@ -45,7 +45,9 @@ const maxGpuCacheFilesToSummarize = 5000;
 const maxGpuCacheFilesToLog = 25;
 
 let installedStartupSwitches = false;
+let installedAppWindowHook = false;
 let probeRunDirectory: string | undefined;
+const installedProbeWindows = new WeakSet<BrowserWindow>();
 
 export function getBlackScreenRecoveryStrategy(): BlackScreenRecoveryStrategy {
 	return resolveBlackScreenRecoveryStrategy(undefined).strategy;
@@ -162,6 +164,8 @@ export function applyBlackScreenRecoveryStartupSwitches(strategy = getBlackScree
 		gpuCache: getGpuCacheSnapshot(),
 		argv: process.argv
 	});
+
+	installBlackScreenRecoveryAppWindowHook(strategy);
 }
 
 export function logBlackScreenRecoveryWindowHook(label: string, configuredStrategy?: string): void {
@@ -186,6 +190,17 @@ export function installBlackScreenRecoveryProbe(win: BrowserWindow, label = 'mai
 		display: getDisplaySnapshot(win)
 	});
 
+	if (installedProbeWindows.has(win)) {
+		writeBlackScreenEvent('blackScreenRecovery.installSkipped', {
+			label,
+			isWindows,
+			strategy,
+			strategyResolution,
+			reason: 'duplicateWindow'
+		});
+		return;
+	}
+
 	if (strategy === 'off' || !isWindows) {
 		writeBlackScreenEvent('blackScreenRecovery.installSkipped', {
 			label,
@@ -196,6 +211,8 @@ export function installBlackScreenRecoveryProbe(win: BrowserWindow, label = 'mai
 		});
 		return;
 	}
+
+	installedProbeWindows.add(win);
 
 	const state = {
 		lastNudgeAt: 0,
@@ -283,6 +300,38 @@ export function installBlackScreenRecoveryProbe(win: BrowserWindow, label = 'mai
 	logGpuInfoComplete(strategy, label);
 	startWindowStatePolling(win, strategy, label, state);
 	scheduleSamples('installed');
+}
+
+function installBlackScreenRecoveryAppWindowHook(startupStrategy: BlackScreenRecoveryStrategy): void {
+	if (installedAppWindowHook || !isWindows) {
+		return;
+	}
+
+	if (startupStrategy === 'off') {
+		writeBlackScreenEvent('blackScreenRecovery.appWindowHook.skipped', {
+			startupStrategy,
+			reason: 'startupStrategyOff'
+		});
+		return;
+	}
+
+	installedAppWindowHook = true;
+	writeBlackScreenEvent('blackScreenRecovery.appWindowHook.installed', {
+		startupStrategy
+	});
+
+	(electron.app as unknown as { on(eventName: string, listener: (event: unknown, win: BrowserWindow) => void): void }).on('browser-window-created', (_event, win) => {
+		writeBlackScreenEvent('blackScreenRecovery.appWindowCreated', {
+			startupStrategy,
+			window: getWindowSnapshot(win),
+			display: getDisplaySnapshot(win)
+		});
+		setTimeout(() => {
+			if (!win.isDestroyed()) {
+				installBlackScreenRecoveryProbe(win, 'app.browser-window-created', startupStrategy);
+			}
+		}, 0);
+	});
 }
 
 function onBrowserWindowEvent(win: BrowserWindow, eventName: string, listener: () => void): void {
