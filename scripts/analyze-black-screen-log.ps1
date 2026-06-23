@@ -27,22 +27,37 @@ function Resolve-BlackScreenLogPath {
 		return $item.FullName
 	}
 
-	$latest = Join-Path $env:TEMP "codearts-black-screen-probe\latest-run.txt"
+	$root = Join-Path $env:TEMP "codearts-black-screen-probe"
+	$latestWindow = Join-Path $root "latest-window-run.txt"
+	if (Test-Path -LiteralPath $latestWindow) {
+		$windowRun = Get-Content -LiteralPath $latestWindow | Where-Object { $_ } | Select-Object -Last 1
+		if ($windowRun) {
+			$eventsPath = Join-Path $windowRun "events.ndjson"
+			if (Test-Path -LiteralPath $eventsPath) {
+				return $eventsPath
+			}
+		}
+	}
+
+	$bestRun = Select-BestBlackScreenRun -Root $root
+	if ($bestRun) {
+		return $bestRun.eventsPath
+	}
+
+	$latest = Join-Path $root "latest-run.txt"
 	if (-not (Test-Path -LiteralPath $latest)) {
-		throw "No path was provided and latest-run.txt was not found: $latest"
+		throw "No path was provided and no black screen probe logs were found under: $root"
 	}
 
 	$runDir = Get-Content -LiteralPath $latest | Where-Object { $_ } | Select-Object -Last 1
-	if (-not $runDir) {
-		throw "latest-run.txt is empty: $latest"
+	if ($runDir) {
+		$eventsPath = Join-Path $runDir "events.ndjson"
+		if (Test-Path -LiteralPath $eventsPath) {
+			return $eventsPath
+		}
 	}
 
-	$eventsPath = Join-Path $runDir "events.ndjson"
-	if (-not (Test-Path -LiteralPath $eventsPath)) {
-		throw "Latest run does not contain events.ndjson: $eventsPath"
-	}
-
-	return $eventsPath
+	throw "latest-run.txt exists but no readable events.ndjson was found: $latest"
 }
 
 function Read-Events {
@@ -78,6 +93,79 @@ function Read-Events {
 	return [pscustomobject]@{
 		events = $events.ToArray()
 		parseErrors = $parseErrors.ToArray()
+	}
+}
+
+function Select-BestBlackScreenRun {
+	param([string]$Root)
+
+	$runs = Join-Path $Root "runs"
+	if (-not (Test-Path -LiteralPath $runs)) {
+		return $null
+	}
+
+	$candidates = New-Object System.Collections.Generic.List[object]
+	foreach ($dir in @(Get-ChildItem -LiteralPath $runs -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 40)) {
+		$eventsPath = Join-Path $dir.FullName "events.ndjson"
+		if (-not (Test-Path -LiteralPath $eventsPath)) {
+			continue
+		}
+
+		$score = Get-BlackScreenRunScore -EventsPath $eventsPath
+		if ($score.eventCount -gt 0) {
+			$candidates.Add($score)
+		}
+	}
+
+	return @($candidates.ToArray() | Sort-Object score,lastTime -Descending | Select-Object -First 1)
+}
+
+function Get-BlackScreenRunScore {
+	param([string]$EventsPath)
+
+	$score = 0
+	$eventCount = 0
+	$firstTime = $null
+	$lastTime = $null
+	$processId = $null
+
+	foreach ($line in @(Get-Content -LiteralPath $EventsPath -ErrorAction SilentlyContinue)) {
+		if (-not $line.Trim()) {
+			continue
+		}
+
+		try {
+			$event = $line | ConvertFrom-Json
+		} catch {
+			continue
+		}
+
+		$eventCount++
+		if (-not $firstTime) {
+			$firstTime = $event.time
+		}
+		$lastTime = $event.time
+		$processId = $event.pid
+
+		switch ($event.event) {
+			"blackScreenRecovery.captureBlackHit" { $score += 20000; break }
+			"blackScreenRecovery.installed" { $score += 10000; break }
+			"blackScreenRecovery.appWindowCreated" { $score += 5000; break }
+			"blackScreenRecovery.windowHook" { $score += 3000; break }
+			"blackScreenRecovery.installAttempt" { $score += 1000; break }
+			"blackScreenRecovery.sample" { $score += 100; break }
+			"blackScreenRecovery.window.state" { $score += 20; break }
+			default { $score += 1; break }
+		}
+	}
+
+	return [pscustomobject]@{
+		eventsPath = $EventsPath
+		score = $score
+		eventCount = $eventCount
+		firstTime = $firstTime
+		lastTime = $lastTime
+		pid = $processId
 	}
 }
 

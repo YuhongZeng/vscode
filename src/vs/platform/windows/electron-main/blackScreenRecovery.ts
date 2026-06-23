@@ -47,6 +47,7 @@ const maxGpuCacheFilesToLog = 25;
 let installedStartupSwitches = false;
 let installedAppWindowHook = false;
 let probeRunDirectory: string | undefined;
+let probeRootDirectory: string | undefined;
 const installedProbeWindows = new WeakSet<BrowserWindow>();
 
 export function getBlackScreenRecoveryStrategy(): BlackScreenRecoveryStrategy {
@@ -854,9 +855,13 @@ function writeBlackScreenEvent(event: string, data: Record<string, unknown> = {}
 			t: Date.now(),
 			pid: process.pid,
 			event,
+			runDirectory: dir,
 			data
 		};
 		appendFileSync(join(dir, 'events.ndjson'), `${JSON.stringify(record)}\n`, 'utf8');
+		if (isWindowProbeEvent(event)) {
+			writeLatestWindowRun(dir);
+		}
 	} catch {
 		// Never let diagnostic logging affect the product.
 	}
@@ -874,7 +879,7 @@ function getProbeRunDirectory(): string {
 		return probeRunDirectory;
 	}
 
-	const root = join(tmpdir(), 'codearts-black-screen-probe');
+	const root = getProbeRootDirectory();
 	const runId = `${formatDateForPath(new Date())}-${process.pid}`;
 	probeRunDirectory = join(root, 'runs', runId);
 
@@ -886,6 +891,34 @@ function getProbeRunDirectory(): string {
 	}
 
 	return probeRunDirectory;
+}
+
+function getProbeRootDirectory(): string {
+	if (!probeRootDirectory) {
+		probeRootDirectory = join(tmpdir(), 'codearts-black-screen-probe');
+	}
+
+	return probeRootDirectory;
+}
+
+function isWindowProbeEvent(event: string): boolean {
+	return event === 'blackScreenRecovery.appWindowCreated'
+		|| event === 'blackScreenRecovery.windowHook'
+		|| event === 'blackScreenRecovery.installAttempt'
+		|| event === 'blackScreenRecovery.installed'
+		|| event === 'blackScreenRecovery.sample'
+		|| event === 'blackScreenRecovery.window.state'
+		|| event === 'blackScreenRecovery.captureBlackHit';
+}
+
+function writeLatestWindowRun(runDirectory: string): void {
+	try {
+		const root = getProbeRootDirectory();
+		mkdirSync(root, { recursive: true });
+		appendFileSync(join(root, 'latest-window-run.txt'), `${runDirectory}\n`, 'utf8');
+	} catch {
+		// best effort
+	}
 }
 
 function formatDateForPath(date: Date): string {
