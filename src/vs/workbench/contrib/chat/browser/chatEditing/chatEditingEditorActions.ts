@@ -42,6 +42,7 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { Event } from '../../../../../base/common/event.js';
 import { ChatConfiguration } from '../../common/constants.js';
+import { clearRememberedChatEditAnchor, createChatEditNavigationHunks, getChatEditAnchorPositions, getRememberedChatEditAnchorIndex, IChatEditNavigationHunk, setRememberedChatEditAnchor } from './chatEditingNavigationUtils.js';
 
 
 export const ChatEditingEditorFileContentMenuId = new MenuId('ChatEditingEditorFileContent');
@@ -148,49 +149,23 @@ abstract class NavigateAction extends ChatEditingEditorAction {
 			return;
 		}
 
-		const ranges: Range[] = [];
 		const session = sessions[0];
 		const entry = session.getEntry(uri)!;
 		const diffInfo = await entry.getDiffInfo?.();
-		if (diffInfo) {
-			for (const change of diffInfo.changes) {
-				const range = change.modified.isEmpty
-					? new Range(change.modified.startLineNumber - 1, 1, change.modified.startLineNumber, 1)
-					: change.modified.toInclusiveRange();
-				if (range) {
-					ranges.push(range);
-				}
-			}
-		}
+		const hunks = diffInfo ? createChatEditNavigationHunks(diffInfo.changes.map(change => change.modified), codeEditor.getModel() ?? undefined) : [];
+		const resourceKey = codeEditor.getModel()?.uri.toString();
 
-		if (ranges.length === 0) {
+		if (hunks.length === 0) {
+			clearRememberedChatEditAnchor(codeEditor);
 			return;
 		}
 
-		ranges.sort(Range.compareRangesUsingStarts);
-
-		let newIndex = -1;
-		for (let i = 0; i < ranges.length; i++) {
-			const range = ranges[i];
-			if (range.containsPosition(position)) {
-				newIndex = i + (this.next ? 1 : -1);
-				break;
-			} else if (Position.isBefore(position, range.getStartPosition())) {
-				newIndex = this.next ? i : i - 1;
-				break;
-			}
-		}
-
-		if (newIndex < 0) {
-			newIndex = ranges.length - 1;
-		} else if (newIndex >= ranges.length) {
-			newIndex = 0;
-		}
-
-		const targetRange = ranges[newIndex];
-		if (targetRange) {
-			codeEditor.setPosition(targetRange.getStartPosition());
-			codeEditor.revealRangeInCenter(targetRange);
+		const targetIndex = getChatEditNavigationTarget(hunks, position, this.next, codeEditor, resourceKey);
+		if (targetIndex !== undefined) {
+			const targetHunk = hunks[targetIndex];
+			setRememberedChatEditAnchor(codeEditor, targetHunk, resourceKey);
+			codeEditor.setPosition(targetHunk.cursorPosition);
+			codeEditor.revealRangeInCenter(targetHunk.revealRange);
 			codeEditor.focus();
 			accessibilitySignalService.playSignal(AccessibilitySignal.chatEditNavigated);
 		}
@@ -199,6 +174,70 @@ abstract class NavigateAction extends ChatEditingEditorAction {
 	override async runChatEditingCommand(accessor: ServicesAccessor, session: IChatEditingSession, entry: IModifiedFileEntry, ctrl: IModifiedFileEntryEditorIntegration): Promise<void> {
 		// No-op as run is overridden
 	}
+}
+
+export function getChatEditNavigationTarget(hunks: readonly IChatEditNavigationHunk[], position: Position, next: boolean, owner?: object, resourceKey?: string): number | undefined {
+	if (hunks.length === 0) {
+		return undefined;
+	}
+
+	const anchorPositions = getChatEditAnchorPositions(hunks);
+	const exactIndices: number[] = [];
+	for (let i = 0; i < anchorPositions.length; i++) {
+		if (Position.equals(anchorPositions[i], position)) {
+			exactIndices.push(i);
+		}
+	}
+
+	if (exactIndices.length > 0) {
+		// Delete-only hunks can resolve to the same anchor position, so continue
+		// from the remembered synthetic anchor when the cursor sits on that spot.
+		let activeIndex = exactIndices[exactIndices.length - 1];
+		if (owner) {
+			const rememberedIndex = exactIndices.find(index => index === getRememberedChatEditAnchorIndex(owner, hunks, position, resourceKey));
+			if (rememberedIndex !== undefined) {
+				activeIndex = rememberedIndex;
+			}
+		}
+		return normalizeChatEditTargetIndex(activeIndex + (next ? 1 : -1), hunks.length);
+	}
+
+	let containingIndex = -1;
+	let firstAfterIndex = -1;
+
+	for (let i = 0; i < hunks.length; i++) {
+		const hunk = hunks[i];
+		if (!hunk.isDeleteOnly && hunk.revealRange.containsPosition(position)) {
+			containingIndex = i;
+			continue;
+		}
+
+		if (firstAfterIndex === -1 && Position.isBefore(position, anchorPositions[i])) {
+			firstAfterIndex = i;
+			break;
+		}
+	}
+
+	let targetIndex: number;
+	if (containingIndex !== -1) {
+		targetIndex = containingIndex + (next ? 1 : -1);
+	} else if (firstAfterIndex !== -1) {
+		targetIndex = next ? firstAfterIndex : firstAfterIndex - 1;
+	} else {
+		targetIndex = next ? 0 : hunks.length - 1;
+	}
+
+	return normalizeChatEditTargetIndex(targetIndex, hunks.length);
+}
+
+function normalizeChatEditTargetIndex(targetIndex: number, length: number): number {
+	if (targetIndex < 0) {
+		return length - 1;
+	}
+	if (targetIndex >= length) {
+		return 0;
+	}
+	return targetIndex;
 }
 
 abstract class NavigateFileAction extends ChatEditingEditorAction {

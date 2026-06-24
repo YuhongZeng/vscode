@@ -30,8 +30,8 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { isCodeEditor } from '../../../../../editor/browser/editorBrowser.js';
-import { Range } from '../../../../../editor/common/core/range.js';
 import { Position } from '../../../../../editor/common/core/position.js';
+import { createChatEditNavigationHunks, getChatEditOverlayActiveIndex, IChatEditNavigationHunk } from './chatEditingNavigationUtils.js';
 
 export class ChatEditingAcceptRejectActionViewItem extends ActionViewItem {
 
@@ -513,7 +513,10 @@ class ChatEditingOverlayController {
 						return -1;
 					}
 
-					const allChanges: { range: Range }[] = [];
+					const control = group.activeEditorPane?.getControl();
+					const model = isCodeEditor(control) ? control.getModel() ?? undefined : undefined;
+					const resourceKey = model?.uri.toString();
+					const allChanges: IChatEditNavigationHunk[] = [];
 					const seenUris = new ResourceSet();
 					for (const { entry } of data) {
 						if (entry.state.read(r) !== ModifiedFileEntryState.Modified) {
@@ -526,14 +529,7 @@ class ChatEditingOverlayController {
 
 						const diff = entry.diffInfo?.read(r);
 						if (diff) {
-							for (const change of diff.changes) {
-								const modifiedRange = change.modified.isEmpty
-									? new Range(change.modified.startLineNumber - 1, 1, change.modified.startLineNumber, 1)
-									: change.modified.toInclusiveRange();
-								if (modifiedRange) {
-									allChanges.push({ range: modifiedRange });
-								}
-							}
+							allChanges.push(...createChatEditNavigationHunks(diff.changes.map(change => change.modified), model ?? undefined));
 						}
 					}
 
@@ -541,25 +537,7 @@ class ChatEditingOverlayController {
 						return -1;
 					}
 
-					allChanges.sort((a, b) => Range.compareRangesUsingStarts(a.range, b.range));
-
-					let newIndex = -1;
-					for (let i = 0; i < allChanges.length; i++) {
-						const range = allChanges[i].range;
-						if (range.containsPosition(position)) {
-							newIndex = i;
-							break;
-						} else if (Position.isBefore(position, range.getStartPosition())) {
-							newIndex = i;
-							break;
-						}
-					}
-
-					if (newIndex === -1) {
-						newIndex = allChanges.length - 1;
-					}
-
-					return newIndex;
+					return getChatEditOverlayActiveIndex(allChanges, position, isCodeEditor(control) ? control : undefined, resourceKey);
 				});
 
 				widget.show(data, changeIndex, fileNavigation);
