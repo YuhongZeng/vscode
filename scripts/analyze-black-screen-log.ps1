@@ -154,6 +154,8 @@ function Get-BlackScreenRunScore {
 			"blackScreenRecovery.windowHook" { $score += 3000; break }
 			"blackScreenRecovery.installAttempt" { $score += 1000; break }
 			"blackScreenRecovery.sample" { $score += 100; break }
+			"blackScreenRecovery.sample.timeout" { $score += 80; break }
+			"blackScreenRecovery.heartbeat" { $score += 40; break }
 			"blackScreenRecovery.window.state" { $score += 20; break }
 			default { $score += 1; break }
 		}
@@ -232,11 +234,15 @@ $appWindowHook = Get-LastEvent $events "blackScreenRecovery.appWindowHook.instal
 $appWindowCreated = Get-LastEvent $events "blackScreenRecovery.appWindowCreated"
 $windowHook = Get-LastEvent $events "blackScreenRecovery.windowHook"
 $installAttempt = Get-LastEvent $events "blackScreenRecovery.installAttempt"
-$installSkipped = Get-LastEvent $events "blackScreenRecovery.installSkipped"
+$installSkippedEvents = Select-Events $events "blackScreenRecovery.installSkipped"
+$installSkipped = $installSkippedEvents | Select-Object -Last 1
+$blockingInstallSkipped = @($installSkippedEvents | Where-Object { (Get-DataValue $_.data "reason") -ne "duplicateWindow" })
 $installed = Get-LastEvent $events "blackScreenRecovery.installed"
 $gpuInfo = Get-LastEvent $events "blackScreenRecovery.gpuInfoComplete"
 $captureHits = Select-Events $events "blackScreenRecovery.captureBlackHit"
 $samples = Select-Events $events "blackScreenRecovery.sample"
+$sampleTimeouts = Select-Events $events "blackScreenRecovery.sample.timeout"
+$heartbeats = Select-Events $events "blackScreenRecovery.heartbeat"
 $windowStates = Select-Events $events "blackScreenRecovery.window.state"
 $windowEvents = Select-EventPattern $events "blackScreenRecovery.window.*"
 $rendererGone = Select-Events $events "blackScreenRecovery.webContents.renderProcessGone"
@@ -283,11 +289,13 @@ $summary = [ordered]@{
 	appWindowCreatedCount = (Select-Events $events "blackScreenRecovery.appWindowCreated").Count
 	windowHookCount = (Select-Events $events "blackScreenRecovery.windowHook").Count
 	installAttemptCount = (Select-Events $events "blackScreenRecovery.installAttempt").Count
-	installSkippedCount = (Select-Events $events "blackScreenRecovery.installSkipped").Count
+	installSkippedCount = $installSkippedEvents.Count
+	blockingInstallSkippedCount = $blockingInstallSkipped.Count
 	strategy = Get-DataValue $installed.data "strategy"
 	startupStrategy = Get-DataValue $startup.data "strategy"
 	installAttemptStrategy = Get-DataValue $installAttempt.data "strategy"
 	installSkippedReason = Get-DataValue $installSkipped.data "reason"
+	heartbeatCount = $heartbeats.Count
 	captureBlackHitCount = $captureHits.Count
 	blackSampleCount = $blackSamples.Count
 	highBlackSampleCount = $highBlackSamples.Count
@@ -298,6 +306,7 @@ $summary = [ordered]@{
 	unresponsiveCount = $unresponsive.Count
 	responsiveCount = $responsive.Count
 	sampleErrorCount = $sampleErrors.Count
+	sampleTimeoutCount = $sampleTimeouts.Count
 	invalidStrategyCount = $invalidStrategy.Count
 }
 
@@ -340,7 +349,9 @@ Write-Host "appWindowHook events:      $((Select-Events $events 'blackScreenReco
 Write-Host "appWindowCreated events:   $((Select-Events $events 'blackScreenRecovery.appWindowCreated').Count)"
 Write-Host "windowHook events:          $((Select-Events $events 'blackScreenRecovery.windowHook').Count)"
 Write-Host "installAttempt events:      $((Select-Events $events 'blackScreenRecovery.installAttempt').Count)"
-Write-Host "installSkipped events:      $((Select-Events $events 'blackScreenRecovery.installSkipped').Count)"
+Write-Host "installSkipped events:      $($installSkippedEvents.Count)"
+Write-Host "blocking installSkipped:    $($blockingInstallSkipped.Count)"
+Write-Host "heartbeat events:           $($heartbeats.Count)"
 Write-Host "captureBlackHit events:      $($captureHits.Count)"
 Write-Host "sample capture.isBlack=true: $($blackSamples.Count)"
 Write-Host "sample blackRatio >= 0.5:    $($highBlackSamples.Count)"
@@ -350,6 +361,7 @@ Write-Host "GPUCache changed samples:    $($gpuCacheChangedSamples.Count)"
 Write-Host "render-process-gone events:  $($rendererGone.Count)"
 Write-Host "unresponsive events:         $($unresponsive.Count)"
 Write-Host "sample errors:               $($sampleErrors.Count)"
+Write-Host "sample timeouts:             $($sampleTimeouts.Count)"
 Write-Host ""
 
 $lastWindowState = $windowStates | Select-Object -Last 1
@@ -363,6 +375,23 @@ $recentWindowEvents = @($windowEvents | Select-Object -Last 12)
 if ($recentWindowEvents.Count -gt 0) {
 	Write-Host "== Recent Window Events =="
 	$recentWindowEvents | Select-Object time,event | Format-Table -AutoSize | Out-String | Write-Host
+}
+
+$recentHeartbeats = @($heartbeats | Select-Object -Last 8)
+if ($recentHeartbeats.Count -gt 0) {
+	Write-Host "== Recent Heartbeats =="
+	foreach ($heartbeat in $recentHeartbeats) {
+		$renderer = Get-DataValue $heartbeat.data "renderer"
+		$window = Get-DataValue $heartbeat.data "window"
+		Write-Host ("{0} visible={1} focused={2} visibility={3} rafAgeMs={4} mutationAgeMs={5}" -f
+			$heartbeat.time,
+			(Get-DataValue $window "isVisible"),
+			(Get-DataValue $window "isFocused"),
+			(Get-DataValue $renderer "visibilityState"),
+			(Get-DataValue $renderer "rafAgeMs"),
+			(Get-DataValue $renderer "mutationAgeMs"))
+	}
+	Write-Host ""
 }
 
 if ($captureHits.Count -gt 0) {
@@ -444,8 +473,8 @@ if (-not $windowHook) {
 	Write-Host "- No windowHook event was found. The early module loaded, but this build likely did not execute the patched BaseWindow.setWin hook. The app-level BrowserWindow hook should still install the probe if appWindowCreated exists."
 } elseif (-not $installAttempt) {
 	Write-Host "- windowHook exists but installAttempt is missing. Check the call from windowImpl.ts to installBlackScreenRecoveryProbe and any internal merge differences."
-} elseif ($installSkipped) {
-	Write-Host "- The window probe was skipped. Inspect installSkipped.reason and strategyResolution above."
+} elseif ($blockingInstallSkipped.Count -gt 0) {
+	Write-Host "- The window probe was skipped for a non-duplicate reason. Inspect installSkipped.reason and strategyResolution above."
 } elseif (-not $installed) {
 	Write-Host "- installAttempt exists but installed is missing. Check for an install-time exception or a build mismatch around blackScreenRecovery.ts."
 }
@@ -470,4 +499,8 @@ if ($gpuCacheChangedSamples.Count -gt 0) {
 
 if ($rendererGone.Count -gt 0 -or $unresponsive.Count -gt 0) {
 	Write-Host "- Renderer process lifecycle/unresponsive events exist. Preserve dumps if available."
+}
+
+if ($sampleTimeouts.Count -gt 0) {
+	Write-Host "- sample timeout events exist. capturePage or renderer JS may have stalled during diagnosis."
 }

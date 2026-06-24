@@ -41,6 +41,9 @@ const validStrategies = new Set<string>([
 
 const sampleDelaysMs = [0, 1000, 2000, 5000, 10000, 20000, 30000, 60000];
 const statePollIntervalMs = 5000;
+const heartbeatIntervalMs = 15000;
+const continuousSampleIntervalMs = 30000;
+const asyncProbeTimeoutMs = 10000;
 const maxGpuCacheFilesToSummarize = 5000;
 const maxGpuCacheFilesToLog = 25;
 
@@ -218,6 +221,8 @@ export function installBlackScreenRecoveryProbe(win: BrowserWindow, label = 'mai
 	const state = {
 		lastNudgeAt: 0,
 		sampleGeneration: 0,
+		heartbeatGeneration: 0,
+		continuousSampleGeneration: 0,
 		initialGpuCache: getGpuCacheSnapshot(),
 		lastWindowStateKey: ''
 	};
@@ -300,6 +305,8 @@ export function installBlackScreenRecoveryProbe(win: BrowserWindow, label = 'mai
 	});
 	logGpuInfoComplete(strategy, label);
 	startWindowStatePolling(win, strategy, label, state);
+	startHeartbeatPolling(win, strategy, label, state);
+	startContinuousSampling(win, strategy, label, state);
 	scheduleSamples('installed');
 }
 
@@ -369,6 +376,82 @@ function startWindowStatePolling(win: BrowserWindow, strategy: BlackScreenRecove
 	};
 
 	setTimeout(poll, 0);
+}
+
+function startHeartbeatPolling(win: BrowserWindow, strategy: BlackScreenRecoveryStrategy, label: string, state: { heartbeatGeneration: number }): void {
+	const poll = () => {
+		if (win.isDestroyed()) {
+			return;
+		}
+
+		const generation = ++state.heartbeatGeneration;
+		getRendererStateWithTimeout(win).then(renderer => {
+			if (win.isDestroyed()) {
+				return;
+			}
+
+			writeBlackScreenEvent('blackScreenRecovery.heartbeat', {
+				label,
+				strategy,
+				generation,
+				window: getWindowSnapshot(win),
+				display: getDisplaySnapshot(win),
+				webContents: getWebContentsSnapshot(win),
+				renderer
+			});
+		}, error => {
+			writeBlackScreenEvent('blackScreenRecovery.heartbeat.error', {
+				label,
+				strategy,
+				generation,
+				error: getErrorMessage(error)
+			});
+		}).finally(() => {
+			setTimeout(poll, heartbeatIntervalMs);
+		});
+	};
+
+	setTimeout(poll, heartbeatIntervalMs);
+}
+
+function startContinuousSampling(
+	win: BrowserWindow,
+	strategy: BlackScreenRecoveryStrategy,
+	label: string,
+	state: { continuousSampleGeneration: number; lastNudgeAt: number; initialGpuCache: Record<string, unknown> }
+): void {
+	const poll = () => {
+		if (win.isDestroyed()) {
+			return;
+		}
+
+		const generation = ++state.continuousSampleGeneration;
+		raceWithTimeout(sampleWindow(win, strategy, 'continuous', continuousSampleIntervalMs, state), asyncProbeTimeoutMs, 'timeout').then(result => {
+			if (result === 'timeout') {
+				writeBlackScreenEvent('blackScreenRecovery.sample.timeout', {
+					label,
+					strategy,
+					reason: 'continuous',
+					generation,
+					delayMs: continuousSampleIntervalMs,
+					timeoutMs: asyncProbeTimeoutMs
+				});
+			}
+		}, error => {
+			writeBlackScreenEvent('blackScreenRecovery.sample.error', {
+				label,
+				strategy,
+				reason: 'continuous',
+				generation,
+				delayMs: continuousSampleIntervalMs,
+				error: getErrorMessage(error)
+			});
+		}).finally(() => {
+			setTimeout(poll, continuousSampleIntervalMs);
+		});
+	};
+
+	setTimeout(poll, continuousSampleIntervalMs);
 }
 
 function appendDisableFeature(feature: string): void {
@@ -500,6 +583,13 @@ async function getRendererState(win: BrowserWindow): Promise<Record<string, unkn
 	} catch (error) {
 		return { error: getErrorMessage(error) };
 	}
+}
+
+async function getRendererStateWithTimeout(win: BrowserWindow): Promise<Record<string, unknown> | undefined> {
+	return raceWithTimeout(getRendererState(win), asyncProbeTimeoutMs, {
+		error: 'timeout',
+		timeoutMs: asyncProbeTimeoutMs
+	});
 }
 
 async function runVisibilityPulse(win: BrowserWindow, reason: string): Promise<void> {
@@ -906,7 +996,9 @@ function isWindowProbeEvent(event: string): boolean {
 		|| event === 'blackScreenRecovery.windowHook'
 		|| event === 'blackScreenRecovery.installAttempt'
 		|| event === 'blackScreenRecovery.installed'
+		|| event === 'blackScreenRecovery.heartbeat'
 		|| event === 'blackScreenRecovery.sample'
+		|| event === 'blackScreenRecovery.sample.timeout'
 		|| event === 'blackScreenRecovery.window.state'
 		|| event === 'blackScreenRecovery.captureBlackHit';
 }
@@ -944,6 +1036,13 @@ function safeCall<T>(fn: () => T): T | undefined {
 
 function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function raceWithTimeout<T, U>(promise: Promise<T>, timeoutMs: number, timeoutValue: U): Promise<T | U> {
+	return Promise.race([
+		promise,
+		sleep(timeoutMs).then(() => timeoutValue)
+	]);
 }
 
 function getErrorMessage(error: unknown): string {
