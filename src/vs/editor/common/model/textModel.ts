@@ -266,6 +266,7 @@ export class TextModel extends Disposable implements model.ITextModel, IDecorati
 	private _isDisposed: boolean;
 	private __isDisposing: boolean;
 	public _isDisposing(): boolean { return this.__isDisposing; }
+	private _onDidChangeAttachedCallback: ((model: TextModel) => void) | undefined;
 	private _versionId: number;
 	/**
 	 * Unlike, versionId, this can go down (via undo) or go to previous values (via redo)
@@ -379,6 +380,7 @@ export class TextModel extends Disposable implements model.ITextModel, IDecorati
 
 		this._isDisposed = false;
 		this.__isDisposing = false;
+		this._onDidChangeAttachedCallback = undefined;
 
 		this._instanceId = strings.singleLetterHash(MODEL_ID);
 		this._lastDecorationId = 0;
@@ -417,6 +419,10 @@ export class TextModel extends Disposable implements model.ITextModel, IDecorati
 		this._tokenizationTextModelPart.handleLanguageConfigurationServiceChange(e);
 	}
 
+	public _setAttachedChangeCallback(callback: ((model: TextModel) => void) | undefined): void {
+		this._onDidChangeAttachedCallback = callback;
+	}
+
 	public override dispose(): void {
 		this.__isDisposing = true;
 		this._onWillDispose.fire();
@@ -424,6 +430,7 @@ export class TextModel extends Disposable implements model.ITextModel, IDecorati
 		this._isDisposed = true;
 		super.dispose();
 		this._bufferDisposable.dispose();
+		this._onDidChangeAttachedCallback = undefined;
 		this.__isDisposing = false;
 		// Manually release reference to previous text buffer to avoid large leaks
 		// in case someone leaks a TextModel reference
@@ -602,6 +609,7 @@ export class TextModel extends Disposable implements model.ITextModel, IDecorati
 		if (this._attachedEditorCount === 1) {
 			this._tokenizationTextModelPart.handleDidChangeAttached();
 			this._onDidChangeAttached.fire(undefined);
+			this._onDidChangeAttachedCallback?.(this);
 		}
 		return this._attachedViews.attachView();
 	}
@@ -611,6 +619,7 @@ export class TextModel extends Disposable implements model.ITextModel, IDecorati
 		if (this._attachedEditorCount === 0) {
 			this._tokenizationTextModelPart.handleDidChangeAttached();
 			this._onDidChangeAttached.fire(undefined);
+			this._onDidChangeAttachedCallback?.(this);
 		}
 		this._attachedViews.detachView(view);
 	}

@@ -26,7 +26,6 @@ import { SEMANTIC_HIGHLIGHTING_SETTING_ID, isSemanticColoringEnabled } from '../
 export class DocumentSemanticTokensFeature extends Disposable {
 
 	private readonly _watchers = this._register(new DisposableResourceMap<ModelSemanticColoring>());
-	private readonly _modelListeners = this._register(new DisposableResourceMap<IDisposable>());
 
 	constructor(
 		@ISemanticTokensStylingService semanticTokensStylingService: ISemanticTokensStylingService,
@@ -60,17 +59,12 @@ export class DocumentSemanticTokensFeature extends Disposable {
 			}
 		};
 
-		const onModelAdded = (model: ITextModel) => {
-			this._modelListeners.set(model.uri, model.onDidChangeAttached(() => update(model)));
-			update(model);
-		};
-
-		modelService.getModels().forEach(onModelAdded);
-		this._register(modelService.onModelAdded(onModelAdded));
+		modelService.getModels().forEach(update);
+		this._register(modelService.onModelAdded(update));
 		this._register(modelService.onModelRemoved((model) => {
 			deregister(model);
-			this._modelListeners.deleteAndDispose(model.uri);
 		}));
+		this._register(modelService.onModelAttachedChanged(update));
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(SEMANTIC_HIGHLIGHTING_SETTING_ID)) {
 				handleSettingOrThemeChange();

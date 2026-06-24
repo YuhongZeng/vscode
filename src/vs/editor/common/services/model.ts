@@ -34,5 +34,7 @@ export interface IModelService {
 
 	readonly onModelRemoved: Event<ITextModel>;
 
+	readonly onModelAttachedChanged: Event<ITextModel>;
+
 	readonly onModelLanguageChanged: Event<{ readonly model: ITextModel; readonly oldLanguageId: string }>;
 }

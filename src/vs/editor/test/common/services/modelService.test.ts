@@ -62,6 +62,21 @@ suite('ModelService', () => {
 		model3.dispose();
 	});
 
+	test('onModelAttachedChanged fires when a model is attached and detached', () => {
+		const resource = URI.parse('file://test-attached.txt');
+		const model = modelService.createModel('farboo', null, resource);
+		const events: boolean[] = [];
+		const listener = disposables.add(modelService.onModelAttachedChanged(model => events.push(model.isAttachedToEditor())));
+
+		const view = model.onBeforeAttached();
+		model.onBeforeDetached(view);
+
+		assert.deepStrictEqual(events, [true, false]);
+
+		listener.dispose();
+		modelService.destroyModel(resource);
+	});
+
 	test('_computeEdits no change', function () {
 
 		const model = disposables.add(createTextModel(

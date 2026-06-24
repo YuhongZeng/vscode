@@ -24,7 +24,7 @@ import { ITextModelService } from '../../../../../editor/common/services/resolve
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
-import { IFileService } from '../../../../../platform/files/common/files.js';
+import { FileChangeType, IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IProductService } from '../../../../../platform/product/common/productService.js';
@@ -142,9 +142,13 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 		}));
 
 		this._register(this._fileService.onDidFilesChange(e => {
+			if (!e.gotDeleted()) {
+				return;
+			}
+
 			for (const session of this._sessionsObs.get()) {
 				for (const entry of session.entries.get()) {
-					if (entry.kind === ChatEditKind.Created && e.affects(entry.modifiedURI) && e.gotDeleted()) {
+					if (entry.kind === ChatEditKind.Created && e.contains(entry.modifiedURI, FileChangeType.DELETED)) {
 						(entry as AbstractChatEditingModifiedFileEntry).markAsDeleted();
 					}
 				}

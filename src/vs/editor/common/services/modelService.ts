@@ -94,6 +94,9 @@ export class ModelService extends Disposable implements IModelService {
 	private readonly _onModelRemoved: Emitter<ITextModel> = this._register(new Emitter<ITextModel>());
 	public readonly onModelRemoved: Event<ITextModel> = this._onModelRemoved.event;
 
+	private readonly _onModelAttachedChanged = this._register(new Emitter<ITextModel>());
+	public readonly onModelAttachedChanged = this._onModelAttachedChanged.event;
+
 	private readonly _onModelModeChanged = this._register(new Emitter<{ model: ITextModel; oldLanguageId: string }>());
 	public readonly onModelLanguageChanged = this._onModelModeChanged.event;
 
@@ -324,6 +327,7 @@ export class ModelService extends Disposable implements IModelService {
 			options,
 			resource
 		);
+		model._setAttachedChangeCallback((model) => this._onModelAttachedChanged.fire(model));
 		if (resource && this._disposedModels.has(MODEL_ID(resource))) {
 			const disposedModelData = this._removeDisposedModel(resource)!;
 			const elements = this._undoRedoService.getElements(resource);
