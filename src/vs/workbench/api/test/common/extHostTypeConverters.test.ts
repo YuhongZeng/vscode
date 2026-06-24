@@ -7,8 +7,8 @@ import assert from 'assert';
 import { URI, UriComponents } from '../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { IconPathDto } from '../../common/extHost.protocol.js';
-import { IconPath } from '../../common/extHostTypeConverters.js';
-import { ThemeColor, ThemeIcon } from '../../common/extHostTypes.js';
+import { IconPath, WorkspaceEdit } from '../../common/extHostTypeConverters.js';
+import { FileEditType, ThemeColor, ThemeIcon } from '../../common/extHostTypes.js';
 
 suite('extHostTypeConverters', function () {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -118,6 +118,66 @@ suite('extHostTypeConverters', function () {
 				assert.strictEqual(result.dark.toString(), URI.revive(input.dark).toString());
 				assert.strictEqual(result.light.toString(), URI.revive(input.light).toString());
 			});
+		});
+	});
+
+	suite('WorkspaceEdit', function () {
+		test('to handles text and file edits', function () {
+			const value = WorkspaceEdit.to({
+				edits: [
+					{
+						resource: URI.parse('file:///workspace/test.ts'),
+						textEdit: {
+							range: {
+								startLineNumber: 1,
+								startColumn: 1,
+								endLineNumber: 1,
+								endColumn: 1
+							},
+							text: 'hello'
+						},
+						versionId: 1
+					},
+					{
+						newResource: URI.parse('file:///workspace/created.ts'),
+						options: { overwrite: true }
+					},
+					{
+						oldResource: URI.parse('file:///workspace/deleted.ts'),
+						options: { recursive: true }
+					},
+					{
+						oldResource: URI.parse('file:///workspace/from.ts'),
+						newResource: URI.parse('file:///workspace/to.ts'),
+						options: { overwrite: true }
+					}
+				]
+			});
+
+			const entries = value._allEntries();
+			assert.strictEqual(entries.length, 4);
+
+			assert.strictEqual(entries[0]._type, FileEditType.File);
+			assert.strictEqual(entries[1]._type, FileEditType.File);
+			assert.strictEqual(entries[2]._type, FileEditType.File);
+			assert.strictEqual(entries[3]._type, FileEditType.Text);
+
+			if (entries[0]._type === FileEditType.File) {
+				assert.strictEqual(entries[0].to?.toString(), 'file:///workspace/created.ts');
+				assert.strictEqual(entries[0].options?.overwrite, true);
+			}
+			if (entries[1]._type === FileEditType.File) {
+				assert.strictEqual(entries[1].from?.toString(), 'file:///workspace/deleted.ts');
+				assert.strictEqual(entries[1].options?.recursive, true);
+			}
+			if (entries[2]._type === FileEditType.File) {
+				assert.strictEqual(entries[2].from?.toString(), 'file:///workspace/from.ts');
+				assert.strictEqual(entries[2].to?.toString(), 'file:///workspace/to.ts');
+			}
+			if (entries[3]._type === FileEditType.Text) {
+				assert.strictEqual(entries[3].uri.toString(), 'file:///workspace/test.ts');
+				assert.strictEqual(entries[3].edit.newText, 'hello');
+			}
 		});
 	});
 });

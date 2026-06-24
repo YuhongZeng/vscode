@@ -638,11 +638,11 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		};
 	}
 
-	startDeletion(resource: URI, responseModel: IChatResponseModel, undoStopId: string): void {
+	startDeletion(resource: URI, responseModel: IChatResponseModel, undoStopId: string): Promise<void> {
 		this._assertNotDisposed();
 
 		// Queue the deletion operation with proper locking
-		this._streamingEditLocks.queue(resource.toString(), async () => {
+		return this._streamingEditLocks.queue(resource.toString(), async () => {
 			if (this.isDisposed) {
 				return;
 			}
@@ -707,14 +707,31 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		});
 	}
 
-	applyWorkspaceEdit(edit: IChatWorkspaceEdit, responseModel: IChatResponseModel, undoStopId: string): void {
+	async applyWorkspaceEdit(edit: IChatWorkspaceEdit, responseModel: IChatResponseModel, undoStopId: string): Promise<void> {
+		const promises: Promise<void>[] = [];
 		for (const fileEdit of edit.edits) {
 			if (fileEdit.oldResource && !fileEdit.newResource) {
 				// File deletion
-				this.startDeletion(fileEdit.oldResource, responseModel, undoStopId);
+				promises.push(this.startDeletion(fileEdit.oldResource, responseModel, undoStopId));
+			} else if (!fileEdit.oldResource && fileEdit.newResource) {
+				// File creation
+				promises.push(this._streamingEditLocks.queue(fileEdit.newResource.toString(), async () => {
+					if (this.isDisposed) {
+						return;
+					}
+					await this._bulkEditService.apply({ edits: [fileEdit] });
+				}));
+			} else if (fileEdit.oldResource && fileEdit.newResource) {
+				// File rename
+				promises.push(this._streamingEditLocks.queue(fileEdit.oldResource.toString(), async () => {
+					if (this.isDisposed) {
+						return;
+					}
+					await this._bulkEditService.apply({ edits: [fileEdit] });
+				}));
 			}
-			// Future: handle file creations and renames
 		}
+		await Promise.all(promises);
 	}
 
 	async startExternalEdits(responseModel: IChatResponseModel, operationId: number, resources: URI[], undoStopId: string): Promise<IChatProgress[]> {

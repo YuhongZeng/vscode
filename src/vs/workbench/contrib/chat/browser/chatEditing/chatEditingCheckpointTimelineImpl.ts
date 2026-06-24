@@ -880,6 +880,7 @@ export class ChatEditingCheckpointTimelineImpl implements IChatEditingCheckpoint
 			const entryDiff: IEditSessionEntryDiff = {
 				originalURI: originalUri,
 				modifiedURI: modifiedUri,
+				changes: diff?.changes ?? [],
 				identical: !!diff?.identical,
 				isFinal,
 				quitEarly: !diff || diff.quitEarly,

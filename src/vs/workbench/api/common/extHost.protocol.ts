@@ -3399,7 +3399,55 @@ export interface IApplyEditsResultDto {
 	success: boolean;
 	errorMessage?: string;
 	failedEdits?: { uri: UriComponents; reason: string }[];
+	displayDiff: IChatEditingDisplayDiffDto[];
 }
+
+export interface IChatEditingDisplayLineRangeDto {
+	startLineNumber: number;
+	endLineNumberExclusive: number;
+}
+
+export interface IChatEditingTextDiffHunkDto {
+	type: 'insert' | 'delete' | 'modify';
+	original: IChatEditingDisplayLineRangeDto;
+	modified: IChatEditingDisplayLineRangeDto;
+}
+
+export interface IChatEditingTextDisplayDiffDto {
+	type: 'text';
+	uri: UriComponents;
+	changeType: 'create' | 'delete' | 'modify';
+	/** Snapshot URI from immediately before this apply operation. */
+	originalUri: UriComponents;
+	/** Snapshot URI from immediately after this apply operation. */
+	modifiedUri: UriComponents;
+	hunks: IChatEditingTextDiffHunkDto[];
+}
+
+export interface IChatEditingCreateFileDisplayDiffDto {
+	type: 'create';
+	uri: UriComponents;
+}
+
+export interface IChatEditingDeleteFileDisplayDiffDto {
+	type: 'delete';
+	uri: UriComponents;
+}
+
+export interface IChatEditingRenameFileDisplayDiffDto {
+	type: 'rename';
+	oldUri: UriComponents;
+	newUri: UriComponents;
+}
+
+export type IChatEditingFileOperationDisplayDiffDto =
+	| IChatEditingCreateFileDisplayDiffDto
+	| IChatEditingDeleteFileDisplayDiffDto
+	| IChatEditingRenameFileDisplayDiffDto;
+
+export type IChatEditingDisplayDiffDto =
+	| IChatEditingTextDisplayDiffDto
+	| IChatEditingFileOperationDisplayDiffDto;
 
 export interface MainThreadChatEditingShape extends IDisposable {
 	$createEditingSession(handle: number, chatSessionId?: string): Promise<string>;
@@ -3417,6 +3465,7 @@ export interface ExtHostChatEditingShape {
 	$onDidUpdateSession(handle: number, files: { uri: UriComponents; state: number; kind: number; added: number; removed: number }[]): Promise<void>;
 	$onDidUserAction(handle: number, action: { type: number; uri: UriComponents; isFromApi?: boolean; file: { uri: UriComponents; state: number; kind: number; added: number; removed: number } }): void;
 	$onDidUnclaimedUserAction(chatSessionId: string): void;
+	$onDidDisposeSession(handle: number): void;
 }
 
 export interface ExtHostChatSessionsShape {

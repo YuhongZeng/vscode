@@ -16,13 +16,64 @@ declare module 'vscode' {
 			Rejected = 2
 		}
 
+		/**
+		 * Represents the kind of a chat edit.
+		 */
+		export enum ChatEditKind {
+			Created = 0,
+			Modified = 1,
+			Deleted = 2
+		}
+
 		export interface ChatEditingFile {
 			readonly uri: Uri;
 			readonly state: ChatEditingFileState;
-			readonly isNew: boolean;
+			readonly kind: ChatEditKind;
 			readonly added: number;
 			readonly removed: number;
 		}
+
+		export interface ChatEditingLineRange {
+			readonly startLineNumber: number;
+			readonly endLineNumberExclusive: number;
+		}
+
+		export interface ChatEditingTextDiffHunk {
+			readonly kind: ChatEditKind;
+			readonly original: ChatEditingLineRange;
+			readonly modified: ChatEditingLineRange;
+		}
+
+		export interface ChatEditingTextDiff {
+			readonly uri: Uri;
+			readonly kind: ChatEditKind;
+			/**
+			 * A snapshot URI representing the file immediately before this `applyEdits` call.
+			 */
+			readonly originalUri: Uri;
+			/**
+			 * A snapshot URI representing the file immediately after this `applyEdits` call.
+			 */
+			readonly modifiedUri: Uri;
+			readonly hunks: readonly ChatEditingTextDiffHunk[];
+		}
+
+		export interface ChatEditingCreateFileDiff {
+			readonly uri: Uri;
+			readonly kind: ChatEditKind.Created;
+		}
+
+		export interface ChatEditingDeleteFileDiff {
+			readonly uri: Uri;
+			readonly kind: ChatEditKind.Deleted;
+		}
+
+		export interface ChatEditingRenameFileDiff {
+			readonly oldUri: Uri;
+			readonly newUri: Uri;
+		}
+
+		export type ChatEditingDisplayDiff = ChatEditingTextDiff | ChatEditingCreateFileDiff | ChatEditingDeleteFileDiff | ChatEditingRenameFileDiff;
 
 		/**
 		 * Represents the result of applying edits to a chat editing session.
@@ -40,6 +91,13 @@ declare module 'vscode' {
 			 * A list of files that failed to apply or save.
 			 */
 			readonly failedEdits?: { readonly uri: Uri; readonly reason: string }[];
+			/**
+			 * The display diff for this `applyEdits` call as computed by the IDE for the editor UI.
+			 * This compares snapshots taken immediately before and after the apply, so it does not
+			 * accumulate diffs from earlier edits in the same session. Text content is omitted and
+			 * only file operations plus text hunk ranges are included.
+			 */
+			readonly displayDiff: readonly ChatEditingDisplayDiff[];
 		}
 
 		export enum ChatEditingSessionUserAction {

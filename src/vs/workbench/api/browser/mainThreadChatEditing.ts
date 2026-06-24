@@ -6,9 +6,9 @@
 import { combinedDisposable, Disposable, DisposableMap, IDisposable } from '../../../base/common/lifecycle.js';
 import { autorun } from '../../../base/common/observable.js';
 import { RunOnceScheduler } from '../../../base/common/async.js';
-import { ExtHostChatEditingShape, ExtHostContext, IApplyEditsResultDto, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
+import { ExtHostChatEditingShape, ExtHostContext, IApplyEditsResultDto, IChatEditingDisplayDiffDto, IChatEditingDisplayLineRangeDto, IChatEditingTextDiffHunkDto, IChatEditingTextDisplayDiffDto, IWorkspaceEditDto, MainContext, MainThreadChatEditingShape } from '../common/extHost.protocol.js';
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
-import { IChatEditingService, IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
+import { awaitCompleteChatEditingDiff, IChatEditingService, IChatEditingSession, IEditSessionEntryDiff, IModifiedFileEntry, ModifiedFileEntryState } from '../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../contrib/chat/common/chatService/chatService.js';
 import { ITextFileService } from '../../services/textfile/common/textfiles.js';
 import { IFilesConfigurationService } from '../../services/filesConfiguration/common/filesConfigurationService.js';
@@ -24,12 +24,18 @@ import { Range } from '../../../editor/common/core/range.js';
 import { IWorkspaceFileEdit } from '../../../editor/common/languages.js';
 import { URI, UriComponents } from '../../../base/common/uri.js';
 
+const applyEditsBeforeSnapshotId = 'chatEditingApplyEditsBefore';
+const applyEditsAfterSnapshotId = 'chatEditingApplyEditsAfter';
+const MAX_UNCLAIMED_CHAT_EDITING_SESSIONS = 100;
+const MAX_UNCLAIMED_CHAT_EDITING_ACTIONS_PER_SESSION = 100;
+
 @extHostNamedCustomer(MainContext.MainThreadChatEditing)
 export class MainThreadChatEditing extends Disposable implements MainThreadChatEditingShape {
 
 	private readonly _proxy: ExtHostChatEditingShape;
 	private readonly _sessions = this._register(new DisposableMap<number, IChatEditingSession>());
 	private readonly _sessionDisposables = this._register(new DisposableMap<number, IDisposable>());
+	private readonly _disposingSessions = new Set<number>();
 	private readonly _unclaimedActions = new Map<string, { type: number; uri: UriComponents; isFromApi?: boolean; file: { uri: UriComponents; state: number; kind: number; added: number; removed: number } }[]>();
 
 	constructor(
@@ -95,8 +101,17 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 						const chatSessionId = globalSession.chatSessionResource.toString();
 						let actions = this._unclaimedActions.get(chatSessionId);
 						if (!actions) {
+							if (this._unclaimedActions.size >= MAX_UNCLAIMED_CHAT_EDITING_SESSIONS) {
+								const oldest = this._unclaimedActions.keys().next().value;
+								if (oldest) {
+									this._unclaimedActions.delete(oldest);
+								}
+							}
 							actions = [];
 							this._unclaimedActions.set(chatSessionId, actions);
+						}
+						if (actions.length >= MAX_UNCLAIMED_CHAT_EDITING_ACTIONS_PER_SESSION) {
+							actions.shift();
 						}
 						actions.push(actionPayload);
 						this._proxy.$onDidUnclaimedUserAction(chatSessionId);
@@ -109,24 +124,24 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 	}
 
 	async $createEditingSession(handle: number, chatSessionId?: string): Promise<string> {
+		let chatModelRef: IDisposable | undefined;
+
 		let chatModel: ChatModel | undefined;
 		if (chatSessionId) {
 			const sessionUri = URI.parse(chatSessionId);
 			const ref = await this._chatService.getOrRestoreSession(sessionUri);
 			if (ref) {
 				chatModel = ref.object as ChatModel;
-				// We need to keep a reference to it so it doesn't get disposed
-				this._register(ref);
+				chatModelRef = ref;
 			}
 		}
 
 		if (!chatModel) {
-			const chatModelRef = this._chatService.startSession(ChatAgentLocation.Chat, {});
+			chatModelRef = this._chatService.startSession(ChatAgentLocation.Chat, {});
 			if (!chatModelRef) {
 				throw new Error('Failed to start chat session');
 			}
 			chatModel = chatModelRef.object as ChatModel;
-			this._register(chatModelRef);
 		}
 
 		// Ensure we are working with the concrete class to access methods if needed, though interface should suffice for creation
@@ -140,6 +155,9 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				this._proxy.$onDidUserAction(handle, action);
 			}
 			this._unclaimedActions.delete(chatSessionIdStr);
+		}
+		if (chatSessionId) {
+			this._unclaimedActions.delete(chatSessionId);
 		}
 
 		const updateScheduler = new RunOnceScheduler(() => {
@@ -168,7 +186,17 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 			}
 		});
 
-		this._sessionDisposables.set(handle, combinedDisposable(disposable, updateScheduler));
+		const sessionDisposeListener = session.onDidDispose(() => {
+			if (this._disposingSessions.has(handle)) {
+				return;
+			}
+
+			this._sessions.deleteAndLeak(handle);
+			this._sessionDisposables.deleteAndDispose(handle);
+			this._proxy.$onDidDisposeSession(handle);
+		});
+
+		this._sessionDisposables.set(handle, combinedDisposable(chatModelRef ?? Disposable.None, disposable, updateScheduler, sessionDisposeListener));
 
 		return session.chatSessionResource.toString();
 	}
@@ -177,8 +205,13 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		const session = this._sessions.get(handle);
 		if (session) {
 			await session.stop();
-			this._sessions.deleteAndDispose(handle);
-			this._sessionDisposables.deleteAndDispose(handle);
+			this._disposingSessions.add(handle);
+			try {
+				this._sessionDisposables.deleteAndDispose(handle);
+				this._sessions.deleteAndDispose(handle);
+			} finally {
+				this._disposingSessions.delete(handle);
+			}
 		}
 	}
 
@@ -186,12 +219,12 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 		try {
 			const session = this._sessions.get(handle);
 			if (!session) {
-				return { success: false, errorMessage: 'Session not found' };
+				return { success: false, errorMessage: 'Session not found', displayDiff: [] };
 			}
 
 			const edits = reviveWorkspaceEditDto(editDto, this._uriIdentityService);
 			if (!edits) {
-				return { success: false, errorMessage: 'Failed to revive workspace edit' };
+				return { success: false, errorMessage: 'Failed to revive workspace edit', displayDiff: [] };
 			}
 
 			// Pre-flight check: ensure none of the files are read-only
@@ -214,13 +247,13 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 			}
 
 			if (failedEdits.length > 0) {
-				return { success: false, errorMessage: 'One or more files are read-only', failedEdits };
+				return { success: false, errorMessage: 'One or more files are read-only', failedEdits, displayDiff: [] };
 			}
 
 			const chatModel = this._chatService.getSession(session.chatSessionResource) as ChatModel;
 
 			if (!chatModel) {
-				return { success: false, errorMessage: 'Chat model not found' };
+				return { success: false, errorMessage: 'Chat model not found', displayDiff: [] };
 			}
 
 			// Create a request to house these edits
@@ -230,23 +263,25 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 			// Ensure response exists
 			const response = request.response;
 			if (!response) {
-				return { success: false, errorMessage: 'Response not found' };
+				return { success: false, errorMessage: 'Response not found', displayDiff: [] };
 			}
+
+			session.createSnapshot(request.id, applyEditsBeforeSnapshotId);
 
 			// Apply edits
 			// We iterate over the WorkspaceEdit and stream them into the session
-			const completePromises: Promise<void>[] = [];
+			const applyPromises: Promise<void>[] = [];
 			for (const edit of edits.edits) {
 				// Check if it is a text edit
 				// eslint-disable-next-line local/code-no-in-operator
 				if ('textEdit' in edit) {
 					const uri = edit.resource;
 					const textEdits = edit.textEdit;
-					const stream = session.startStreamingEdits(uri, response, undefined);
+					const stream = session.startStreamingEdits(uri, response, applyEditsAfterSnapshotId);
 					stream.pushText([textEdits], true);
 					const p = stream.complete();
 					if (p) {
-						completePromises.push(p);
+						applyPromises.push(p);
 					}
 				} else {
 					// Handle file operations (create/delete/rename)
@@ -255,37 +290,46 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 					const workspaceFileEdit = edit as IWorkspaceFileEdit;
 					// eslint-disable-next-line local/code-no-in-operator
 					if (!('textEdit' in workspaceFileEdit)) {
-						session.applyWorkspaceEdit({
+						applyPromises.push(session.applyWorkspaceEdit({
 							kind: 'workspaceEdit',
 							edits: [workspaceFileEdit]
-						}, response, 'undoStop'); // Provide a dummy undoStop ID
+						}, response, applyEditsAfterSnapshotId));
 					}
 				}
 			}
 
-			// Wait for all streaming edits to be fully applied by the background sequencer
-			if (completePromises.length > 0) {
-				await Promise.all(completePromises);
+			// Wait for all text and file operations to settle before capturing the after snapshot.
+			if (applyPromises.length > 0) {
+				await Promise.all(applyPromises);
 			}
+
+			session.createSnapshot(request.id, applyEditsAfterSnapshotId);
 
 			// Mark response as complete
 			response.complete();
 
-			// Collect all modified URIs
-			const modifiedUris = new Map<string, URI>();
+			// Only text edits need an explicit save here. Pure file operations such as
+			// createFile/renameFile are already applied to disk by the bulk edit service.
+			const modifiedUris = new Map<string, { uri: URI; requiresSave: boolean }>();
 			for (const edit of edits.edits) {
 				// eslint-disable-next-line local/code-no-in-operator
 				if ('textEdit' in edit) {
-					modifiedUris.set(edit.resource.toString(), edit.resource);
+					modifiedUris.set(edit.resource.toString(), { uri: edit.resource, requiresSave: true });
 				} else {
 					const workspaceFileEdit = edit as IWorkspaceFileEdit;
 					if (workspaceFileEdit.newResource) {
-						modifiedUris.set(workspaceFileEdit.newResource.toString(), workspaceFileEdit.newResource);
+						const key = workspaceFileEdit.newResource.toString();
+						const existing = modifiedUris.get(key);
+						modifiedUris.set(key, { uri: workspaceFileEdit.newResource, requiresSave: existing?.requiresSave ?? false });
 					}
 				}
 			}
 
-			const saveResults = await Promise.all(Array.from(modifiedUris.values()).map(async uri => {
+			const saveResults = await Promise.all(Array.from(modifiedUris.values()).map(async ({ uri, requiresSave }) => {
+				if (!requiresSave) {
+					return { uri, success: true };
+				}
+
 				try {
 					const result = await this._textFileService.save(uri, { ignoreErrorHandler: true });
 					if (!result) {
@@ -316,16 +360,124 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				return {
 					success: false,
 					errorMessage: 'Failed to save one or more files to disk. The files might be read-only or the save operation was cancelled.',
-					failedEdits: saveFailedEdits
+					failedEdits: saveFailedEdits,
+					displayDiff: []
 				};
 			}
-			return { success: true };
+			const displayDiff = await this._computeDisplayDiff(session, editDto, request.id);
+			return { success: true, displayDiff };
 		} catch (err) {
 			if (err instanceof Error) {
-				return { success: false, errorMessage: err.message };
+				return { success: false, errorMessage: err.message, displayDiff: [] };
 			}
-			return { success: false, errorMessage: 'Unknown error occurred while applying edits' };
+			return { success: false, errorMessage: 'Unknown error occurred while applying edits', displayDiff: [] };
 		}
+	}
+
+	private async _computeDisplayDiff(session: IChatEditingSession, editDto: IWorkspaceEditDto, requestId: string): Promise<IChatEditingDisplayDiffDto[]> {
+		const displayDiff: IChatEditingDisplayDiffDto[] = [];
+		const textDiffResources = new Map<string, { uri: URI; changeType: IChatEditingTextDisplayDiffDto['changeType'] }>();
+
+		for (const edit of editDto.edits) {
+			// eslint-disable-next-line local/code-no-in-operator
+			if ('textEdit' in edit || 'cellEdit' in edit) {
+				const uri = URI.revive(edit.resource);
+				this._recordTextDiffResource(textDiffResources, uri, 'modify');
+				continue;
+			}
+
+			if (edit.oldResource && edit.newResource) {
+				displayDiff.push({ type: 'rename', oldUri: edit.oldResource, newUri: edit.newResource });
+			} else if (edit.newResource) {
+				displayDiff.push({ type: 'create', uri: edit.newResource });
+				this._recordTextDiffResource(textDiffResources, URI.revive(edit.newResource), 'create');
+			} else if (edit.oldResource) {
+				displayDiff.push({ type: 'delete', uri: edit.oldResource });
+				this._recordTextDiffResource(textDiffResources, URI.revive(edit.oldResource), 'delete');
+			}
+		}
+
+		for (const { uri, changeType } of textDiffResources.values()) {
+			const originalUri = session.getSnapshotUri(requestId, uri, applyEditsBeforeSnapshotId);
+			const modifiedUri = session.getSnapshotUri(requestId, uri, applyEditsAfterSnapshotId);
+			if (!originalUri || !modifiedUri) {
+				continue;
+			}
+
+			const diffObservable = session.getEntryDiffBetweenStops(uri, requestId, applyEditsBeforeSnapshotId);
+			if (!diffObservable) {
+				continue;
+			}
+
+			const textDisplayDiff = this._createTextDisplayDiff(
+				uri,
+				changeType,
+				originalUri,
+				modifiedUri,
+				await awaitCompleteChatEditingDiff(diffObservable)
+			);
+			if (textDisplayDiff) {
+				displayDiff.push(textDisplayDiff);
+			}
+		}
+
+		return displayDiff;
+	}
+
+	private _recordTextDiffResource(
+		textDiffResources: Map<string, { uri: URI; changeType: IChatEditingTextDisplayDiffDto['changeType'] }>,
+		uri: URI,
+		changeType: IChatEditingTextDisplayDiffDto['changeType']
+	): void {
+		const key = uri.toString();
+		const existing = textDiffResources.get(key);
+		if (!existing || existing.changeType === 'modify') {
+			textDiffResources.set(key, { uri, changeType });
+		}
+	}
+
+	private _createTextDisplayDiff(
+		uri: URI,
+		changeType: IChatEditingTextDisplayDiffDto['changeType'],
+		originalUri: URI,
+		modifiedUri: URI,
+		diff: IEditSessionEntryDiff | undefined
+	): IChatEditingTextDisplayDiffDto | undefined {
+		if (!diff) {
+			return undefined;
+		}
+
+		if (diff.identical || diff.changes.length === 0) {
+			return undefined;
+		}
+
+		return {
+			type: 'text',
+			uri,
+			changeType,
+			originalUri,
+			modifiedUri,
+			hunks: diff.changes.map(change => this._toTextDiffHunk(change))
+		};
+	}
+
+	private _toTextDiffHunk(change: { original: { startLineNumber: number; endLineNumberExclusive: number }; modified: { startLineNumber: number; endLineNumberExclusive: number } }): IChatEditingTextDiffHunkDto {
+		const original = this._toDisplayLineRange(change.original);
+		const modified = this._toDisplayLineRange(change.modified);
+		const type = original.startLineNumber === original.endLineNumberExclusive
+			? 'insert'
+			: modified.startLineNumber === modified.endLineNumberExclusive
+				? 'delete'
+				: 'modify';
+
+		return { type, original, modified };
+	}
+
+	private _toDisplayLineRange(range: { startLineNumber: number; endLineNumberExclusive: number }): IChatEditingDisplayLineRangeDto {
+		return {
+			startLineNumber: range.startLineNumber,
+			endLineNumberExclusive: range.endLineNumberExclusive
+		};
 	}
 
 	async $accept(handle: number, uris?: UriComponents[]): Promise<void> {
