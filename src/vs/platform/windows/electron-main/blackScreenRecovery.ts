@@ -940,8 +940,10 @@ function writeBlackScreenEvent(event: string, data: Record<string, unknown> = {}
 	try {
 		const dir = getProbeRunDirectory();
 		mkdirSync(dir, { recursive: true });
+		const now = new Date();
 		const record = {
-			time: new Date().toISOString(),
+			time: formatDateForLog(now),
+			utcTime: now.toISOString(),
 			t: Date.now(),
 			pid: process.pid,
 			event,
@@ -955,6 +957,25 @@ function writeBlackScreenEvent(event: string, data: Record<string, unknown> = {}
 	} catch {
 		// Never let diagnostic logging affect the product.
 	}
+}
+
+function formatDateForLog(date: Date): string {
+	const pad = (value: number, length = 2) => String(value).padStart(length, '0');
+	const offsetMinutes = -date.getTimezoneOffset();
+	const sign = offsetMinutes >= 0 ? '+' : '-';
+	const absoluteOffsetMinutes = Math.abs(offsetMinutes);
+	const offsetHours = Math.floor(absoluteOffsetMinutes / 60);
+	const offsetRemainingMinutes = absoluteOffsetMinutes % 60;
+
+	return [
+		date.getFullYear(),
+		pad(date.getMonth() + 1),
+		pad(date.getDate())
+	].join('-') + 'T' + [
+		pad(date.getHours()),
+		pad(date.getMinutes()),
+		pad(date.getSeconds())
+	].join(':') + `.${pad(date.getMilliseconds(), 3)}${sign}${pad(offsetHours)}:${pad(offsetRemainingMinutes)}`;
 }
 
 function getProbeRunDirectory(): string {

@@ -326,7 +326,7 @@ if ($Json) {
 Write-Host "== Black Screen Probe Summary =="
 Write-Host "Log: $eventsPath"
 Write-Host "Events: $($events.Count)"
-Write-Host "Time: $($firstEvent.time) -> $($lastEvent.time)"
+Write-Host "Time(local): $($firstEvent.time) -> $($lastEvent.time)"
 Write-Host "Parse errors: $($read.parseErrors.Count)"
 Write-Host ""
 
