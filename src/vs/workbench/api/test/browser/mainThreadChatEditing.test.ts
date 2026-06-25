@@ -4,8 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { timeout } from '../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
-import { constObservable } from '../../../../base/common/observable.js';
+import { constObservable, observableValue } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { mock } from '../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
@@ -15,7 +16,7 @@ import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uri
 import { IChatEditingDisplayDiffDto, IWorkspaceEditDto } from '../../common/extHost.protocol.js';
 import { MainThreadChatEditing } from '../../browser/mainThreadChatEditing.js';
 import { SingleProxyRPCProtocol } from '../common/testRPCProtocol.js';
-import { IChatEditingService, IChatEditingSession } from '../../../contrib/chat/common/editing/chatEditingService.js';
+import { IChatEditingService, IChatEditingSession, ModifiedFileEntryState } from '../../../contrib/chat/common/editing/chatEditingService.js';
 import { IChatService } from '../../../contrib/chat/common/chatService/chatService.js';
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
 import { IFilesConfigurationService } from '../../../services/filesConfiguration/common/filesConfigurationService.js';
@@ -30,6 +31,14 @@ suite('MainThreadChatEditing', () => {
 		_sessions: { set(handle: number, session: IChatEditingSession): void; get(handle: number): IChatEditingSession | undefined };
 		_sessionDisposables: { size: number };
 	};
+
+	function createChatEditingServiceMock(overrides?: Partial<IChatEditingService>): IChatEditingService {
+		return Object.assign(new class extends mock<IChatEditingService>() {
+			override beginApplyEditsPreviewSuppression(): void { }
+			override endApplyEditsPreviewSuppression(): void { }
+			override isEntryPreviewVisible(): boolean { return true; }
+		}, overrides);
+	}
 
 	test('compute display diff reuses stop-based IDE diff result for per-apply snapshot hunks', async () => {
 		const modifiedUri = URI.parse('file:///workspace/modified.ts');
@@ -386,6 +395,269 @@ suite('MainThreadChatEditing', () => {
 		mainThreadChatEditing.dispose();
 	});
 
+	test('applyEdits defers session updates until save completes', async () => {
+		const targetUri = URI.parse('file:///workspace/delayed-save.ts');
+		const chatSessionResource = URI.parse('chat:///session-delayed-save');
+		const updateEvents: { uri: string; state: number; added: number; removed: number }[][] = [];
+		const suppressionEvents: string[] = [];
+		const entryState = observableValue('entryState', ModifiedFileEntryState.Accepted);
+		const linesAdded = observableValue('linesAdded', 0);
+		const linesRemoved = observableValue('linesRemoved', 0);
+		let releaseStreamingEdit!: () => void;
+		let releaseSave!: () => void;
+
+		const mainThreadChatEditing = new MainThreadChatEditing(
+			SingleProxyRPCProtocol({
+				$onDidUpdateSession(_handle: number, files) {
+					updateEvents.push(files.map(file => ({
+						uri: file.uri.toString(),
+						state: file.state,
+						added: file.added,
+						removed: file.removed
+					})));
+				}
+			}),
+			createChatEditingServiceMock({
+				beginApplyEditsPreviewSuppression(resources) {
+					suppressionEvents.push(`begin:${resources.map(resource => resource.toString()).join(',')}`);
+				},
+				endApplyEditsPreviewSuppression(resources) {
+					suppressionEvents.push(`end:${resources.map(resource => resource.toString()).join(',')}`);
+				},
+				startOrContinueGlobalEditingSession(): IChatEditingSession {
+					return {
+						chatSessionResource,
+						entries: observableValue('entries', [{
+							modifiedURI: targetUri,
+							state: entryState,
+							linesAdded,
+							linesRemoved,
+							kind: 1
+						}]),
+						onDidDispose: Event.None,
+						startStreamingEdits() {
+							return {
+								pushText() { },
+								complete() {
+									entryState.set(ModifiedFileEntryState.Modified, undefined);
+									linesAdded.set(2, undefined);
+									linesRemoved.set(1, undefined);
+									return new Promise<void>(resolve => {
+										releaseStreamingEdit = resolve;
+									});
+								}
+							};
+						},
+						stop() { return Promise.resolve(); },
+						dispose() { }
+					} as unknown as IChatEditingSession;
+				}
+			}),
+			new class extends mock<IChatService>() {
+				override onDidPerformUserAction = Event.None;
+				override startSession() {
+					return {
+						object: {},
+						dispose() { }
+					};
+				}
+				override getSession(resource: URI) {
+					assert.strictEqual(resource.toString(), chatSessionResource.toString());
+					return {
+						addRequest() {
+							return {
+								id: 'request-delayed-save',
+								response: {
+									complete() { }
+								}
+							};
+						}
+					};
+				}
+			},
+			new class extends mock<IUriIdentityService>() { },
+			new class extends mock<ITextFileService>() {
+				override async save(): Promise<URI> {
+					return new Promise<URI>(resolve => {
+						releaseSave = () => resolve(targetUri);
+					});
+				}
+			},
+			new class extends mock<IFilesConfigurationService>() {
+				override isReadonly(): boolean {
+					return false;
+				}
+			},
+			new class extends mock<IExtensionService>() { }
+		);
+
+		await mainThreadChatEditing.$createEditingSession(1);
+		await timeout(75);
+		updateEvents.length = 0;
+
+		const resultPromise = mainThreadChatEditing.$applyEdits(1, {
+			edits: [{
+				resource: targetUri,
+				textEdit: {
+					range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+					text: 'delayed save'
+				},
+				versionId: 1
+			}]
+		}, 'delayed save');
+
+		await timeout(0);
+		releaseStreamingEdit();
+		await timeout(75);
+		assert.deepStrictEqual(updateEvents, []);
+		assert.deepStrictEqual(suppressionEvents, [`begin:${targetUri.toString()}`]);
+
+		releaseSave();
+		const result = await resultPromise;
+
+		assert.strictEqual(result.success, true);
+		assert.deepStrictEqual(updateEvents, [[{
+			uri: targetUri.toString(),
+			state: ModifiedFileEntryState.Modified,
+			added: 2,
+			removed: 1
+		}]]);
+		assert.deepStrictEqual(suppressionEvents, [`begin:${targetUri.toString()}`, `end:${targetUri.toString()}`]);
+
+		mainThreadChatEditing.dispose();
+	});
+
+	test('applyEdits defers session updates until reject rollback completes after save failure', async () => {
+		const targetUri = URI.parse('file:///workspace/delayed-reject.ts');
+		const chatSessionResource = URI.parse('chat:///session-delayed-reject');
+		const updateEvents: { uri: string; state: number; added: number; removed: number }[][] = [];
+		const suppressionEvents: string[] = [];
+		const entryState = observableValue('entryState', ModifiedFileEntryState.Accepted);
+		const linesAdded = observableValue('linesAdded', 0);
+		const linesRemoved = observableValue('linesRemoved', 0);
+		let releaseReject!: () => void;
+
+		const mainThreadChatEditing = new MainThreadChatEditing(
+			SingleProxyRPCProtocol({
+				$onDidUpdateSession(_handle: number, files) {
+					updateEvents.push(files.map(file => ({
+						uri: file.uri.toString(),
+						state: file.state,
+						added: file.added,
+						removed: file.removed
+					})));
+				}
+			}),
+			createChatEditingServiceMock({
+				beginApplyEditsPreviewSuppression(resources) {
+					suppressionEvents.push(`begin:${resources.map(resource => resource.toString()).join(',')}`);
+				},
+				endApplyEditsPreviewSuppression(resources) {
+					suppressionEvents.push(`end:${resources.map(resource => resource.toString()).join(',')}`);
+				},
+				startOrContinueGlobalEditingSession(): IChatEditingSession {
+					return {
+						chatSessionResource,
+						entries: observableValue('entries', [{
+							modifiedURI: targetUri,
+							state: entryState,
+							linesAdded,
+							linesRemoved,
+							kind: 1
+						}]),
+						onDidDispose: Event.None,
+						startStreamingEdits() {
+							return {
+								pushText() { },
+								complete() {
+									entryState.set(ModifiedFileEntryState.Modified, undefined);
+									linesAdded.set(3, undefined);
+									linesRemoved.set(1, undefined);
+									return Promise.resolve();
+								}
+							};
+						},
+						async reject(...uris: URI[]) {
+							assert.deepStrictEqual(uris, [targetUri]);
+							return new Promise<void>(resolve => {
+								releaseReject = () => {
+									entryState.set(ModifiedFileEntryState.Rejected, undefined);
+									linesAdded.set(0, undefined);
+									linesRemoved.set(0, undefined);
+									resolve();
+								};
+							});
+						},
+						stop() { return Promise.resolve(); },
+						dispose() { }
+					} as unknown as IChatEditingSession;
+				}
+			}),
+			new class extends mock<IChatService>() {
+				override onDidPerformUserAction = Event.None;
+				override startSession() {
+					return {
+						object: {},
+						dispose() { }
+					};
+				}
+				override getSession(resource: URI) {
+					assert.strictEqual(resource.toString(), chatSessionResource.toString());
+					return {
+						addRequest() {
+							return {
+								id: 'request-delayed-reject',
+								response: {
+									complete() { }
+								}
+							};
+						}
+					};
+				}
+			},
+			new class extends mock<IUriIdentityService>() { },
+			new class extends mock<ITextFileService>() {
+				override async save(): Promise<URI> {
+					throw new Error('save failed');
+				}
+			},
+			new class extends mock<IFilesConfigurationService>() {
+				override isReadonly(): boolean {
+					return false;
+				}
+			},
+			new class extends mock<IExtensionService>() { }
+		);
+
+		await mainThreadChatEditing.$createEditingSession(1);
+		await timeout(75);
+		updateEvents.length = 0;
+
+		const resultPromise = mainThreadChatEditing.$applyEdits(1, {
+			edits: [{
+				resource: targetUri,
+				textEdit: {
+					range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+					text: 'delayed reject'
+				},
+				versionId: 1
+			}]
+		}, 'delayed reject');
+
+		await timeout(75);
+		assert.deepStrictEqual(updateEvents, []);
+		assert.deepStrictEqual(suppressionEvents, [`begin:${targetUri.toString()}`]);
+
+		releaseReject();
+		const result = await resultPromise;
+
+		assert.strictEqual(result.success, false);
+		assert.deepStrictEqual(updateEvents, [[]]);
+		assert.deepStrictEqual(suppressionEvents, [`begin:${targetUri.toString()}`, `end:${targetUri.toString()}`]);
+
+		mainThreadChatEditing.dispose();
+	});
+
 	test('applyEdits retries Windows transient save errors and succeeds once save recovers', async () => {
 		const targetUri = URI.parse('file:///workspace/retry-success.ts');
 		const chatSessionResource = URI.parse('chat:///session-retry-success');
@@ -394,7 +666,7 @@ suite('MainThreadChatEditing', () => {
 
 		const mainThreadChatEditing = new MainThreadChatEditing(
 			SingleProxyRPCProtocol({}),
-			new class extends mock<IChatEditingService>() { },
+			createChatEditingServiceMock(),
 			new class extends mock<IChatService>() {
 				override onDidPerformUserAction = Event.None;
 				override getSession(resource: URI) {
@@ -484,7 +756,7 @@ suite('MainThreadChatEditing', () => {
 
 		const mainThreadChatEditing = new MainThreadChatEditing(
 			SingleProxyRPCProtocol({}),
-			new class extends mock<IChatEditingService>() { },
+			createChatEditingServiceMock(),
 			new class extends mock<IChatService>() {
 				override onDidPerformUserAction = Event.None;
 				override getSession(resource: URI) {
@@ -572,7 +844,7 @@ suite('MainThreadChatEditing', () => {
 
 		const mainThreadChatEditing = new MainThreadChatEditing(
 			SingleProxyRPCProtocol({}),
-			new class extends mock<IChatEditingService>() { },
+			createChatEditingServiceMock(),
 			new class extends mock<IChatService>() {
 				override onDidPerformUserAction = Event.None;
 				override getSession(resource: URI) {
@@ -657,7 +929,7 @@ suite('MainThreadChatEditing', () => {
 
 		const mainThreadChatEditing = new MainThreadChatEditing(
 			SingleProxyRPCProtocol({}),
-			new class extends mock<IChatEditingService>() { },
+			createChatEditingServiceMock(),
 			new class extends mock<IChatService>() {
 				override onDidPerformUserAction = Event.None;
 				override getSession(resource: URI) {

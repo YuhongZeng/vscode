@@ -50,6 +50,25 @@ export interface IChatEditingService {
 	setEditingEditorVisibility(visible: boolean): void;
 
 	/**
+	 * Suppresses workbench-local chat editing previews for the given resources.
+	 * This is used by `applyEdits` so intermediate model changes are not shown
+	 * before the explicit save succeeds or the failure rollback completes.
+	 */
+	beginApplyEditsPreviewSuppression(resources: URI[]): void;
+
+	/**
+	 * Releases a previous preview suppression created by
+	 * {@link beginApplyEditsPreviewSuppression}.
+	 */
+	endApplyEditsPreviewSuppression(resources: URI[]): void;
+
+	/**
+	 * Whether the entry should currently be visible to workbench-local preview
+	 * consumers such as overlays, editor decorations, and multi-diff lists.
+	 */
+	isEntryPreviewVisible(entry: IModifiedFileEntry, reader?: IReader): boolean;
+
+	/**
 	 * Creates a new short lived editing session
 	 */
 	createEditingSession(chatModel: ChatModel): IChatEditingSession;
@@ -70,7 +89,7 @@ export interface IStreamingEdits {
 	pushNotebookCellText(cell: URI, edits: TextEdit[], isLastEdits: boolean): void;
 	pushNotebook(edits: ICellEditOperation[], isLastEdits: boolean): void;
 	/** Marks edits as done, idempotent */
-	complete(options?: { createSnapshot?: boolean }): void | Promise<void>;
+	complete(): void | Promise<void>;
 }
 
 export interface IModifiedEntryTelemetryInfo {

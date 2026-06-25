@@ -39,12 +39,19 @@ const transientChatEditingSaveErrorMessages = [
 	'cannot access the file because it is being used by another process'
 ];
 
+type SessionUpdateState = {
+	suppressionCount: number;
+	hasPendingUpdate: boolean;
+	scheduler: RunOnceScheduler;
+};
+
 @extHostNamedCustomer(MainContext.MainThreadChatEditing)
 export class MainThreadChatEditing extends Disposable implements MainThreadChatEditingShape {
 
 	private readonly _proxy: ExtHostChatEditingShape;
 	private readonly _sessions = this._register(new DisposableMap<number, IChatEditingSession>());
 	private readonly _sessionDisposables = this._register(new DisposableMap<number, IDisposable>());
+	private readonly _sessionUpdateStates = new Map<number, SessionUpdateState>();
 	private readonly _disposingSessions = new Set<number>();
 	private readonly _unclaimedActions = new Map<string, { type: number; uri: UriComponents; isFromApi?: boolean; file: { uri: UriComponents; state: number; kind: number; added: number; removed: number } }[]>();
 
@@ -170,19 +177,8 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 			this._unclaimedActions.delete(chatSessionId);
 		}
 
-		const updateScheduler = new RunOnceScheduler(() => {
-			const entries = session.entries.get();
-			const files = entries
-				.filter(entry => entry.state.get() === ModifiedFileEntryState.Modified)
-				.map(entry => ({
-					uri: entry.modifiedURI,
-					state: entry.state.get(),
-					kind: entry.kind,
-					added: entry.linesAdded?.get() ?? 0,
-					removed: entry.linesRemoved?.get() ?? 0
-				}));
-			this._proxy.$onDidUpdateSession(handle, files);
-		}, 50);
+		const updateState = this._createSessionUpdateState(handle, session);
+		this._sessionUpdateStates.set(handle, updateState);
 
 		const disposable = autorun(reader => {
 			const entries = session.entries.read(reader);
@@ -191,9 +187,7 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				entry.linesAdded?.read(reader);
 				entry.linesRemoved?.read(reader);
 			}
-			if (!updateScheduler.isScheduled()) {
-				updateScheduler.schedule();
-			}
+			this._scheduleSessionUpdate(handle);
 		});
 
 		const sessionDisposeListener = session.onDidDispose(() => {
@@ -201,12 +195,13 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				return;
 			}
 
+			this._sessionUpdateStates.delete(handle);
 			this._sessions.deleteAndLeak(handle);
 			this._sessionDisposables.deleteAndDispose(handle);
 			this._proxy.$onDidDisposeSession(handle);
 		});
 
-		this._sessionDisposables.set(handle, combinedDisposable(chatModelRef ?? Disposable.None, disposable, updateScheduler, sessionDisposeListener));
+		this._sessionDisposables.set(handle, combinedDisposable(chatModelRef ?? Disposable.None, disposable, updateState.scheduler, sessionDisposeListener));
 
 		return session.chatSessionResource.toString();
 	}
@@ -217,6 +212,7 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 			await session.stop();
 			this._disposingSessions.add(handle);
 			try {
+				this._sessionUpdateStates.delete(handle);
 				this._sessionDisposables.deleteAndDispose(handle);
 				this._sessions.deleteAndDispose(handle);
 			} finally {
@@ -260,120 +256,229 @@ export class MainThreadChatEditing extends Disposable implements MainThreadChatE
 				return { success: false, errorMessage: 'One or more files are read-only', failedEdits, displayDiff: [] };
 			}
 
+			const previewSuppressionResources = this._collectApplyPreviewSuppressionResources(editDto);
+
 			const chatModel = this._chatService.getSession(session.chatSessionResource) as ChatModel;
 
 			if (!chatModel) {
 				return { success: false, errorMessage: 'Chat model not found', displayDiff: [] };
 			}
 
-			// Create a request to house these edits
-			const parts = [new ChatRequestTextPart(new OffsetRange(0, description.length), new Range(1, 1, 1, 1), description)];
-			const request = chatModel.addRequest({ parts, text: description }, { variables: [] }, 0);
+			this._chatEditingService.beginApplyEditsPreviewSuppression(previewSuppressionResources);
+			try {
+				return await this._withDeferredSessionUpdates(handle, async () => {
+					// Create a request to house these edits
+					const parts = [new ChatRequestTextPart(new OffsetRange(0, description.length), new Range(1, 1, 1, 1), description)];
+					const request = chatModel.addRequest({ parts, text: description }, { variables: [] }, 0);
 
-			// Ensure response exists
-			const response = request.response;
-			if (!response) {
-				return { success: false, errorMessage: 'Response not found', displayDiff: [] };
-			}
-
-			session.createSnapshot(request.id, applyEditsBeforeSnapshotId);
-
-			// Apply edits
-			// We iterate over the WorkspaceEdit and stream them into the session
-			const applyPromises: Promise<void>[] = [];
-			for (const edit of edits.edits) {
-				// Check if it is a text edit
-				// eslint-disable-next-line local/code-no-in-operator
-				if ('textEdit' in edit) {
-					const uri = edit.resource;
-					const textEdits = edit.textEdit;
-					const stream = session.startStreamingEdits(uri, response, applyEditsAfterSnapshotId);
-					stream.pushText([textEdits], true);
-					const p = stream.complete({ createSnapshot: false });
-					if (p) {
-						applyPromises.push(p);
+					// Ensure response exists
+					const response = request.response;
+					if (!response) {
+						return { success: false, errorMessage: 'Response not found', displayDiff: [] };
 					}
-				} else {
-					// Handle file operations (create/delete/rename)
-					// We need to filter out custom edits as they are not supported here
-					// And ensure type safety for IWorkspaceFileEdit
-					const workspaceFileEdit = edit as IWorkspaceFileEdit;
-					// eslint-disable-next-line local/code-no-in-operator
-					if (!('textEdit' in workspaceFileEdit)) {
-						applyPromises.push(session.applyWorkspaceEdit({
-							kind: 'workspaceEdit',
-							edits: [workspaceFileEdit]
-						}, response, applyEditsAfterSnapshotId));
+
+					session.createSnapshot(request.id, applyEditsBeforeSnapshotId);
+
+					// Apply edits
+					// We iterate over the WorkspaceEdit and stream them into the session
+					const applyPromises: Promise<void>[] = [];
+					for (const edit of edits.edits) {
+						// Check if it is a text edit
+						// eslint-disable-next-line local/code-no-in-operator
+						if ('textEdit' in edit) {
+							const uri = edit.resource;
+							const textEdits = edit.textEdit;
+							const stream = session.startStreamingEdits(uri, response, applyEditsAfterSnapshotId);
+							stream.pushText([textEdits], true);
+							const p = stream.complete({ createSnapshot: false });
+							if (p) {
+								applyPromises.push(p);
+							}
+						} else {
+							// Handle file operations (create/delete/rename)
+							// We need to filter out custom edits as they are not supported here
+							// And ensure type safety for IWorkspaceFileEdit
+							const workspaceFileEdit = edit as IWorkspaceFileEdit;
+							// eslint-disable-next-line local/code-no-in-operator
+							if (!('textEdit' in workspaceFileEdit)) {
+								applyPromises.push(session.applyWorkspaceEdit({
+									kind: 'workspaceEdit',
+									edits: [workspaceFileEdit]
+								}, response, applyEditsAfterSnapshotId));
+							}
+						}
 					}
-				}
-			}
 
-			// Wait for all text and file operations to settle before capturing the after snapshot.
-			if (applyPromises.length > 0) {
-				await Promise.all(applyPromises);
-			}
-
-			session.createSnapshot(request.id, applyEditsAfterSnapshotId);
-
-			// Mark response as complete
-			response.complete();
-
-			// Only text edits need an explicit save here. Pure file operations such as
-			// createFile/renameFile are already applied to disk by the bulk edit service.
-			const modifiedUris = new Map<string, { uri: URI; requiresSave: boolean }>();
-			for (const edit of edits.edits) {
-				// eslint-disable-next-line local/code-no-in-operator
-				if ('textEdit' in edit) {
-					modifiedUris.set(edit.resource.toString(), { uri: edit.resource, requiresSave: true });
-				} else {
-					const workspaceFileEdit = edit as IWorkspaceFileEdit;
-					if (workspaceFileEdit.newResource) {
-						const key = workspaceFileEdit.newResource.toString();
-						const existing = modifiedUris.get(key);
-						modifiedUris.set(key, { uri: workspaceFileEdit.newResource, requiresSave: existing?.requiresSave ?? false });
+					// Wait for all text and file operations to settle before capturing the after snapshot.
+					if (applyPromises.length > 0) {
+						await Promise.all(applyPromises);
 					}
-				}
+
+					session.createSnapshot(request.id, applyEditsAfterSnapshotId);
+
+					// Mark response as complete
+					response.complete();
+
+					// Only text edits need an explicit save here. Pure file operations such as
+					// createFile/renameFile are already applied to disk by the bulk edit service.
+					const modifiedUris = new Map<string, { uri: URI; requiresSave: boolean }>();
+					for (const edit of edits.edits) {
+						// eslint-disable-next-line local/code-no-in-operator
+						if ('textEdit' in edit) {
+							modifiedUris.set(edit.resource.toString(), { uri: edit.resource, requiresSave: true });
+						} else {
+							const workspaceFileEdit = edit as IWorkspaceFileEdit;
+							if (workspaceFileEdit.newResource) {
+								const key = workspaceFileEdit.newResource.toString();
+								const existing = modifiedUris.get(key);
+								modifiedUris.set(key, { uri: workspaceFileEdit.newResource, requiresSave: existing?.requiresSave ?? false });
+							}
+						}
+					}
+
+					const saveResults = await Promise.all(Array.from(modifiedUris.values()).map(async ({ uri, requiresSave }) => {
+						if (!requiresSave) {
+							return { uri, success: true };
+						}
+
+						return this._saveWithRetries(uri);
+					}));
+
+					const failedSaves = saveResults.filter(r => !r.success);
+					if (failedSaves.length > 0) {
+						const saveFailedEdits: { uri: UriComponents; reason: string }[] = failedSaves.map(f => ({
+							uri: f.uri,
+							reason: f.reason || 'Failed to save to disk'
+						}));
+
+						// Revert the dirty state for files that failed to save
+						const urisToReject = failedSaves.map(f => f.uri);
+						session.isAcceptingFromApi = true;
+						try {
+							await session.reject(...urisToReject);
+						} finally {
+							session.isAcceptingFromApi = false;
+						}
+
+						return {
+							success: false,
+							errorMessage: 'Failed to save one or more files to disk. The files might be read-only or the save operation was cancelled.',
+							failedEdits: saveFailedEdits,
+							displayDiff: []
+						};
+					}
+					const displayDiff = await this._computeDisplayDiff(session, editDto, request.id);
+					return { success: true, displayDiff };
+				});
+			} finally {
+				this._chatEditingService.endApplyEditsPreviewSuppression(previewSuppressionResources);
 			}
-
-			const saveResults = await Promise.all(Array.from(modifiedUris.values()).map(async ({ uri, requiresSave }) => {
-				if (!requiresSave) {
-					return { uri, success: true };
-				}
-
-				return this._saveWithRetries(uri);
-			}));
-
-			const failedSaves = saveResults.filter(r => !r.success);
-			if (failedSaves.length > 0) {
-				const saveFailedEdits: { uri: UriComponents; reason: string }[] = failedSaves.map(f => ({
-					uri: f.uri,
-					reason: f.reason || 'Failed to save to disk'
-				}));
-
-				// Revert the dirty state for files that failed to save
-				const urisToReject = failedSaves.map(f => f.uri);
-				session.isAcceptingFromApi = true;
-				try {
-					await session.reject(...urisToReject);
-				} finally {
-					session.isAcceptingFromApi = false;
-				}
-
-				return {
-					success: false,
-					errorMessage: 'Failed to save one or more files to disk. The files might be read-only or the save operation was cancelled.',
-					failedEdits: saveFailedEdits,
-					displayDiff: []
-				};
-			}
-			const displayDiff = await this._computeDisplayDiff(session, editDto, request.id);
-			return { success: true, displayDiff };
 		} catch (err) {
 			if (err instanceof Error) {
 				return { success: false, errorMessage: err.message, displayDiff: [] };
 			}
 			return { success: false, errorMessage: 'Unknown error occurred while applying edits', displayDiff: [] };
 		}
+	}
+
+	private _createSessionUpdateState(handle: number, session: IChatEditingSession): SessionUpdateState {
+		const scheduler = new RunOnceScheduler(() => {
+			if (updateState.suppressionCount > 0) {
+				updateState.hasPendingUpdate = true;
+				return;
+			}
+
+			updateState.hasPendingUpdate = false;
+			this._emitSessionUpdate(handle, session);
+		}, 50);
+
+		const updateState = {
+			suppressionCount: 0,
+			hasPendingUpdate: false,
+			scheduler
+		};
+
+		return updateState;
+	}
+
+	private _scheduleSessionUpdate(handle: number): void {
+		const updateState = this._sessionUpdateStates.get(handle);
+		if (!updateState) {
+			return;
+		}
+
+		if (updateState.suppressionCount > 0) {
+			updateState.hasPendingUpdate = true;
+			return;
+		}
+
+		if (!updateState.scheduler.isScheduled()) {
+			updateState.scheduler.schedule();
+		}
+	}
+
+	private _emitSessionUpdate(handle: number, session: IChatEditingSession): void {
+		const entries = session.entries.get();
+		const files = entries
+			.filter(entry => entry.state.get() === ModifiedFileEntryState.Modified)
+			.map(entry => ({
+				uri: entry.modifiedURI,
+				state: entry.state.get(),
+				kind: entry.kind,
+				added: entry.linesAdded?.get() ?? 0,
+				removed: entry.linesRemoved?.get() ?? 0
+			}));
+		this._proxy.$onDidUpdateSession(handle, files);
+	}
+
+	private async _withDeferredSessionUpdates<T>(handle: number, task: () => Promise<T>): Promise<T> {
+		const updateState = this._sessionUpdateStates.get(handle);
+		if (!updateState) {
+			return task();
+		}
+
+		if (updateState.scheduler.isScheduled()) {
+			updateState.scheduler.cancel();
+			updateState.hasPendingUpdate = true;
+		}
+		updateState.suppressionCount++;
+
+		try {
+			return await task();
+		} finally {
+			updateState.suppressionCount--;
+
+			if (updateState.suppressionCount === 0 && updateState.hasPendingUpdate) {
+				updateState.scheduler.cancel();
+				updateState.hasPendingUpdate = false;
+				const session = this._sessions.get(handle);
+				if (session) {
+					this._emitSessionUpdate(handle, session);
+				}
+			}
+		}
+	}
+
+	private _collectApplyPreviewSuppressionResources(editDto: IWorkspaceEditDto): URI[] {
+		const resources = new Map<string, URI>();
+		for (const edit of editDto.edits) {
+			// eslint-disable-next-line local/code-no-in-operator
+			if ('textEdit' in edit || 'cellEdit' in edit) {
+				const resource = URI.revive(edit.resource);
+				resources.set(resource.toString(), resource);
+				continue;
+			}
+
+			if (edit.oldResource) {
+				const oldResource = URI.revive(edit.oldResource);
+				resources.set(oldResource.toString(), oldResource);
+			}
+			if (edit.newResource) {
+				const newResource = URI.revive(edit.newResource);
+				resources.set(newResource.toString(), newResource);
+			}
+		}
+		return Array.from(resources.values());
 	}
 
 	private async _computeDisplayDiff(session: IChatEditingSession, editDto: IWorkspaceEditDto, requestId: string): Promise<IChatEditingDisplayDiffDto[]> {

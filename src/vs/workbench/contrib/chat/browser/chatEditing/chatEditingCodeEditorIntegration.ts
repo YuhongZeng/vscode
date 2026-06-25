@@ -128,6 +128,9 @@ export class ChatEditingCodeEditorIntegration implements IModifiedFileEntryEdito
 			if (!_chatEditingService.editingEditorVisibility.read(r)) {
 				return false;
 			}
+			if (!_chatEditingService.isEntryPreviewVisible(this._entry, r)) {
+				return false;
+			}
 			if (!isEqual(codeEditorObs.model.read(r)?.uri, documentDiffInfo.read(r).modifiedModel.uri)) {
 				return false;
 			}

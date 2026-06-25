@@ -13,7 +13,7 @@ import { Disposable, DisposableStore, dispose, IDisposable } from '../../../../.
 import { LinkedList } from '../../../../../base/common/linkedList.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
 import { Schemas } from '../../../../../base/common/network.js';
-import { derived, IObservable, observableValue, observableValueOpts, runOnChange, ValueWithChangeEventFromObservable } from '../../../../../base/common/observable.js';
+import { derived, IObservable, IReader, observableValue, observableValueOpts, runOnChange, ValueWithChangeEventFromObservable } from '../../../../../base/common/observable.js';
 import { isEqual } from '../../../../../base/common/resources.js';
 import { compare } from '../../../../../base/common/strings.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -24,7 +24,7 @@ import { ITextModelService } from '../../../../../editor/common/services/resolve
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
-import { IFileService } from '../../../../../platform/files/common/files.js';
+import { FileChangeType, IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IProductService } from '../../../../../platform/product/common/productService.js';
@@ -61,8 +61,29 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 		return this._editingEditorVisibility;
 	}
 
+	private readonly _suppressedApplyPreviewUris = observableValueOpts<ResourceMap<number>>({ equalsFn: () => false }, new ResourceMap());
+
+
 	setEditingEditorVisibility(visible: boolean): void {
 		this._editingEditorVisibility.set(visible, undefined);
+	}
+
+	beginApplyEditsPreviewSuppression(resources: URI[]): void {
+		this._updateApplyEditsPreviewSuppression(resources, 1);
+	}
+
+	endApplyEditsPreviewSuppression(resources: URI[]): void {
+		this._updateApplyEditsPreviewSuppression(resources, -1);
+	}
+
+	isEntryPreviewVisible(entry: IModifiedFileEntry, reader?: IReader): boolean {
+		if (this._isApplyEditsPreviewSuppressed(entry.modifiedURI, reader)) {
+			return false;
+		}
+		if (entry.isDeletion && this._isApplyEditsPreviewSuppressed(entry.originalURI, reader)) {
+			return false;
+		}
+		return true;
 	}
 
 	constructor(
@@ -83,8 +104,8 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 	) {
 		super();
-		this._register(decorationsService.registerDecorationsProvider(_instantiationService.createInstance(ChatDecorationsProvider, this.editingSessionsObs)));
-		this._register(multiDiffSourceResolverService.registerResolver(_instantiationService.createInstance(ChatEditingMultiDiffSourceResolver, this.editingSessionsObs)));
+		this._register(decorationsService.registerDecorationsProvider(_instantiationService.createInstance(ChatDecorationsProvider, this.editingSessionsObs, this)));
+		this._register(multiDiffSourceResolverService.registerResolver(_instantiationService.createInstance(ChatEditingMultiDiffSourceResolver, this.editingSessionsObs, this)));
 
 		// TODO@jrieken
 		// some ugly casting so that this service can pass itself as argument instad as service dependeny
@@ -142,9 +163,13 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 		}));
 
 		this._register(this._fileService.onDidFilesChange(e => {
+			if (!e.gotDeleted()) {
+				return;
+			}
+
 			for (const session of this._sessionsObs.get()) {
 				for (const entry of session.entries.get()) {
-					if (entry.kind === ChatEditKind.Created && e.affects(entry.modifiedURI) && e.gotDeleted()) {
+					if (entry.kind === ChatEditKind.Created && e.contains(entry.modifiedURI, FileChangeType.DELETED)) {
 						(entry as AbstractChatEditingModifiedFileEntry).markAsDeleted();
 					}
 				}
@@ -165,13 +190,49 @@ export class ChatEditingService extends Disposable implements IChatEditingServic
 		for (const session of this._sessionsObs.get()) {
 			const entry = session.getEntry(uri);
 			if (entry) {
-				if (entry.state.get() !== ModifiedFileEntryState.Modified) {
+				if (entry.state.get() !== ModifiedFileEntryState.Modified || !this.isEntryPreviewVisible(entry)) {
 					continue;
 				}
 				return entry as AbstractChatEditingModifiedFileEntry;
 			}
 		}
 		return undefined;
+	}
+
+	private _updateApplyEditsPreviewSuppression(resources: URI[], delta: 1 | -1): void {
+		if (resources.length === 0) {
+			return;
+		}
+
+		const next = new ResourceMap<number>();
+		for (const [resource, value] of this._suppressedApplyPreviewUris.get()) {
+			next.set(resource, value);
+		}
+
+		for (const resource of this._dedupeResources(resources)) {
+			const current = next.get(resource) ?? 0;
+			const updated = current + delta;
+			if (updated > 0) {
+				next.set(resource, updated);
+			} else {
+				next.delete(resource);
+			}
+		}
+
+		this._suppressedApplyPreviewUris.set(next, undefined);
+	}
+
+	private _dedupeResources(resources: URI[]): URI[] {
+		const seen = new ResourceMap<URI>();
+		for (const resource of resources) {
+			seen.set(resource, resource);
+		}
+		return Array.from(seen.values());
+	}
+
+	private _isApplyEditsPreviewSuppressed(resource: URI, reader?: IReader): boolean {
+		const suppressedUris = reader ? this._suppressedApplyPreviewUris.read(reader) : this._suppressedApplyPreviewUris.get();
+		return (suppressedUris.get(resource) ?? 0) > 0;
 	}
 
 	getEditingSession(chatSessionResource: URI): IChatEditingSession | undefined {
@@ -417,13 +478,19 @@ class ChatDecorationsProvider extends Disposable implements IDecorationsProvider
 
 	private readonly _modifiedUris = derived<URI[]>(this, (r) => {
 		const uri = this._currentEntries.read(r);
-		return uri.filter(entry => !entry.isCurrentlyBeingModifiedBy.read(r) && entry.state.read(r) === ModifiedFileEntryState.Modified).map(entry => entry.modifiedURI);
+		return uri
+			.filter(entry =>
+				!entry.isCurrentlyBeingModifiedBy.read(r)
+				&& entry.state.read(r) === ModifiedFileEntryState.Modified
+				&& this._chatEditingService.isEntryPreviewVisible(entry, r))
+			.map(entry => entry.modifiedURI);
 	});
 
 	readonly onDidChange: Event<URI[]>;
 
 	constructor(
-		private readonly _sessions: IObservable<readonly IChatEditingSession[]>
+		private readonly _sessions: IObservable<readonly IChatEditingSession[]>,
+		private readonly _chatEditingService: IChatEditingService
 	) {
 		super();
 		this.onDidChange = Event.any(
@@ -458,6 +525,7 @@ export class ChatEditingMultiDiffSourceResolver implements IMultiDiffSourceResol
 
 	constructor(
 		private readonly _editingSessionsObs: IObservable<readonly IChatEditingSession[]>,
+		private readonly _chatEditingService: IChatEditingService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 	) { }
 
@@ -472,7 +540,7 @@ export class ChatEditingMultiDiffSourceResolver implements IMultiDiffSourceResol
 			return this._editingSessionsObs.read(r).find(candidate => isEqual(candidate.chatSessionResource, parsed.chatSessionResource));
 		});
 
-		return this._instantiationService.createInstance(ChatEditingMultiDiffSource, thisSession, parsed.showPreviousChanges, parsed.title);
+		return this._instantiationService.createInstance(ChatEditingMultiDiffSource, thisSession, this._chatEditingService, parsed.showPreviousChanges, parsed.title);
 	}
 }
 
@@ -483,7 +551,7 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 			return [];
 		}
 		const entries = currentSession.entries.read(reader)
-			.filter(entry => entry.state.read(reader) === ModifiedFileEntryState.Modified);
+			.filter(entry => entry.state.read(reader) === ModifiedFileEntryState.Modified && this._chatEditingService.isEntryPreviewVisible(entry, reader));
 		return entries.map((entry) => {
 			if (this._showPreviousChanges) {
 				const entryDiffObs = currentSession.getEntryDiffBetweenStops(entry.modifiedURI, undefined, undefined);
@@ -544,6 +612,7 @@ class ChatEditingMultiDiffSource implements IResolvedMultiDiffSource {
 
 	constructor(
 		private readonly _currentSession: IObservable<IChatEditingSession | undefined>,
+		private readonly _chatEditingService: IChatEditingService,
 		private readonly _showPreviousChanges: boolean,
 		private readonly _title?: string
 	) { }

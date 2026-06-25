@@ -381,4 +381,25 @@ suite('ChatEditingService', function () {
 		});
 	});
 
+	test('applyEdits preview suppression hides entry previews until released', async function () {
+		return runWithFakedTimers({}, async () => {
+			const uri = URI.from({ scheme: 'test', path: 'suppressed-preview' });
+
+			const modelRef = store.add(chatService.startSession(ChatAgentLocation.Chat));
+			const model = modelRef.object as ChatModel;
+			const session = model.editingSession;
+			assertType(session, 'session not created');
+
+			const entry = await idleAfterEdit(session, model, uri, [{ range: new Range(1, 1, 1, 1), text: 'FarBoo\n' }]);
+
+			assert.strictEqual(editingService.isEntryPreviewVisible(entry), true);
+
+			editingService.beginApplyEditsPreviewSuppression([uri]);
+			assert.strictEqual(editingService.isEntryPreviewVisible(entry), false);
+
+			editingService.endApplyEditsPreviewSuppression([uri]);
+			assert.strictEqual(editingService.isEntryPreviewVisible(entry), true);
+		});
+	});
+
 });

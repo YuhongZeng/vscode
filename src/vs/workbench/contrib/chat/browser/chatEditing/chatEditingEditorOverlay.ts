@@ -435,7 +435,7 @@ class ChatEditingOverlayController {
 			for (const session of sessions) {
 				const entries = session.entries.read(r);
 				for (const entry of entries) {
-					if (entry.state.read(r) === ModifiedFileEntryState.Modified) {
+					if (entry.state.read(r) === ModifiedFileEntryState.Modified && chatEditingService.isEntryPreviewVisible(entry, r)) {
 						const targetUri = entry.isDeletion ? entry.originalURI : entry.modifiedURI;
 						modifiedUris.add(targetUri.toString());
 					}
@@ -494,7 +494,7 @@ class ChatEditingOverlayController {
 				return;
 			}
 
-			const isAnyModified = data.some(d => d.entry.state.read(r) === ModifiedFileEntryState.Modified);
+			const isAnyModified = data.some(d => d.entry.state.read(r) === ModifiedFileEntryState.Modified && chatEditingService.isEntryPreviewVisible(d.entry, r));
 
 			if (isAnyModified) {
 				// any session with changes
@@ -502,7 +502,7 @@ class ChatEditingOverlayController {
 				assertType(editorPane);
 
 				// Initialize editor integrations so that change block UIs are rendered
-				const firstModified = data.find(d => d.entry.state.read(r) === ModifiedFileEntryState.Modified);
+				const firstModified = data.find(d => d.entry.state.read(r) === ModifiedFileEntryState.Modified && chatEditingService.isEntryPreviewVisible(d.entry, r));
 				if (firstModified) {
 					firstModified.entry.getEditorIntegration(editorPane);
 				}
@@ -519,7 +519,7 @@ class ChatEditingOverlayController {
 					const allChanges: IChatEditNavigationHunk[] = [];
 					const seenUris = new ResourceSet();
 					for (const { entry } of data) {
-						if (entry.state.read(r) !== ModifiedFileEntryState.Modified) {
+						if (entry.state.read(r) !== ModifiedFileEntryState.Modified || !chatEditingService.isEntryPreviewVisible(entry, r)) {
 							continue;
 						}
 						if (seenUris.has(entry.modifiedURI)) {
