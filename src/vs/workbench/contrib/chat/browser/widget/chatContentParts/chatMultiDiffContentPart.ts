@@ -210,6 +210,7 @@ export class ChatMultiDiffContentPart extends Disposable implements IChatContent
 					item.diff = {
 						originalURI: resource.originalUri,
 						modifiedURI: resource.modifiedUri,
+						changes: [],
 						isFinal: true,
 						quitEarly: false,
 						identical: false,

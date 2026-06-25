@@ -621,7 +621,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 					}
 				});
 			},
-			complete: () => {
+			complete: (options) => {
 				if (didComplete) {
 					return;
 				}
@@ -630,7 +630,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 				return sequencer.queue(async () => {
 					if (!this.isDisposed) {
 						await this._acceptEdits(resource, [], true, responseModel);
-						await this._resolve(responseModel.requestId, inUndoStop, resource);
+						await this._resolve(responseModel.requestId, inUndoStop, resource, options?.createSnapshot !== false);
 						completePromise.complete();
 					}
 				});
@@ -638,11 +638,11 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		};
 	}
 
-	startDeletion(resource: URI, responseModel: IChatResponseModel, undoStopId: string): void {
+	startDeletion(resource: URI, responseModel: IChatResponseModel, undoStopId: string): Promise<void> {
 		this._assertNotDisposed();
 
 		// Queue the deletion operation with proper locking
-		this._streamingEditLocks.queue(resource.toString(), async () => {
+		return this._streamingEditLocks.queue(resource.toString(), async () => {
 			if (this.isDisposed) {
 				return;
 			}
@@ -707,14 +707,31 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		});
 	}
 
-	applyWorkspaceEdit(edit: IChatWorkspaceEdit, responseModel: IChatResponseModel, undoStopId: string): void {
+	async applyWorkspaceEdit(edit: IChatWorkspaceEdit, responseModel: IChatResponseModel, undoStopId: string): Promise<void> {
+		const promises: Promise<void>[] = [];
 		for (const fileEdit of edit.edits) {
 			if (fileEdit.oldResource && !fileEdit.newResource) {
 				// File deletion
-				this.startDeletion(fileEdit.oldResource, responseModel, undoStopId);
+				promises.push(this.startDeletion(fileEdit.oldResource, responseModel, undoStopId));
+			} else if (!fileEdit.oldResource && fileEdit.newResource) {
+				// File creation
+				promises.push(this._streamingEditLocks.queue(fileEdit.newResource.toString(), async () => {
+					if (this.isDisposed) {
+						return;
+					}
+					await this._bulkEditService.apply({ edits: [fileEdit] });
+				}));
+			} else if (fileEdit.oldResource && fileEdit.newResource) {
+				// File rename
+				promises.push(this._streamingEditLocks.queue(fileEdit.oldResource.toString(), async () => {
+					if (this.isDisposed) {
+						return;
+					}
+					await this._bulkEditService.apply({ edits: [fileEdit] });
+				}));
 			}
-			// Future: handle file creations and renames
 		}
+		await Promise.all(promises);
 	}
 
 	async startExternalEdits(responseModel: IChatResponseModel, operationId: number, resources: URI[], undoStopId: string): Promise<IChatProgress[]> {
@@ -1062,7 +1079,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		};
 	}
 
-	private async _resolve(requestId: string, undoStop: string | undefined, resource: URI): Promise<void> {
+	private async _resolve(requestId: string, undoStop: string | undefined, resource: URI, createSnapshot = true): Promise<void> {
 		const hasOtherTasks = Iterable.some(this._streamingEditLocks.keys(), k => k !== resource.toString());
 		if (!hasOtherTasks) {
 			this._state.set(ChatEditingSessionState.Idle, undefined);
@@ -1073,9 +1090,10 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 			return;
 		}
 
-		// Create checkpoint for this edit completion
-		const label = undoStop ? `Request ${requestId} - Stop ${undoStop}` : `Request ${requestId}`;
-		this._timeline.createCheckpoint(requestId, undoStop, label);
+		if (createSnapshot) {
+			const label = undoStop ? `Request ${requestId} - Stop ${undoStop}` : `Request ${requestId}`;
+			this._timeline.createCheckpoint(requestId, undoStop, label);
+		}
 
 		return entry.acceptStreamingEditsEnd();
 	}

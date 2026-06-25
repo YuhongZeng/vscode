@@ -70,7 +70,7 @@ export interface IStreamingEdits {
 	pushNotebookCellText(cell: URI, edits: TextEdit[], isLastEdits: boolean): void;
 	pushNotebook(edits: ICellEditOperation[], isLastEdits: boolean): void;
 	/** Marks edits as done, idempotent */
-	complete(): void | Promise<void>;
+	complete(options?: { createSnapshot?: boolean }): void | Promise<void>;
 }
 
 export interface IModifiedEntryTelemetryInfo {
@@ -122,6 +122,11 @@ export interface IChatEditingSession extends IDisposable {
 	restoreSnapshot(requestId: string, stopId: string | undefined): Promise<void>;
 
 	/**
+	 * Creates a named snapshot for the current state of the session.
+	 */
+	createSnapshot(requestId: string, stopId: string | undefined): void;
+
+	/**
 	 * Marks all edits to the given resources as agent edits until
 	 * {@link stopExternalEdits} is called with the same ID. This is used for
 	 * agents that make changes on-disk rather than streaming edits through the
@@ -158,7 +163,7 @@ export interface IChatEditingSession extends IDisposable {
 	 * @param responseModel The response model making the edit
 	 * @param undoStopId The undo stop ID for this edit
 	 */
-	applyWorkspaceEdit(edit: IChatWorkspaceEdit, responseModel: IChatResponseModel, undoStopId: string): void;
+	applyWorkspaceEdit(edit: IChatWorkspaceEdit, responseModel: IChatResponseModel, undoStopId: string): Promise<void>;
 
 	/**
 	 * Gets the document diff of a change made to a URI between one undo stop and
@@ -254,9 +259,10 @@ export function editEntriesToMultiDiffData(entriesObs: IObservable<readonly IEdi
 }
 
 export function awaitCompleteChatEditingDiff(diff: IObservable<IEditSessionEntryDiff>, token?: CancellationToken): Promise<IEditSessionEntryDiff>;
+export function awaitCompleteChatEditingDiff(diff: IObservable<IEditSessionEntryDiff | undefined>, token?: CancellationToken): Promise<IEditSessionEntryDiff | undefined>;
 export function awaitCompleteChatEditingDiff(diff: IObservable<readonly IEditSessionEntryDiff[]>, token?: CancellationToken): Promise<readonly IEditSessionEntryDiff[]>;
-export function awaitCompleteChatEditingDiff(diff: IObservable<readonly IEditSessionEntryDiff[] | IEditSessionEntryDiff>, token?: CancellationToken): Promise<readonly IEditSessionEntryDiff[] | IEditSessionEntryDiff> {
-	return new Promise<readonly IEditSessionEntryDiff[] | IEditSessionEntryDiff>((resolve, reject) => {
+export function awaitCompleteChatEditingDiff(diff: IObservable<readonly IEditSessionEntryDiff[] | IEditSessionEntryDiff | undefined>, token?: CancellationToken): Promise<readonly IEditSessionEntryDiff[] | IEditSessionEntryDiff | undefined> {
+	return new Promise<readonly IEditSessionEntryDiff[] | IEditSessionEntryDiff | undefined>((resolve, reject) => {
 		autorunSelfDisposable(reader => {
 			if (token) {
 				if (token.isCancellationRequested) {
@@ -275,7 +281,7 @@ export function awaitCompleteChatEditingDiff(diff: IObservable<readonly IEditSes
 					reader.dispose();
 					resolve(current);
 				}
-			} else if (!current.isBusy) {
+			} else if (current && !current.isBusy) {
 				reader.dispose();
 				resolve(current);
 			}
@@ -295,6 +301,9 @@ export interface IEditSessionEntryDiff extends IEditSessionDiffStats {
 	originalURI: URI;
 	modifiedURI: URI;
 
+	/** Line-level hunks as computed by the IDE diff engine. */
+	changes: IDocumentDiff['changes'];
+
 	/** Diff state information: */
 	quitEarly: boolean;
 	identical: boolean;
@@ -310,6 +319,7 @@ export function emptySessionEntryDiff(originalURI: URI, modifiedURI: URI): IEdit
 	return {
 		originalURI,
 		modifiedURI,
+		changes: [],
 		added: 0,
 		removed: 0,
 		quitEarly: false,
