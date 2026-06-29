@@ -1947,6 +1947,7 @@ export class TestRemoteAgentService implements IRemoteAgentService {
 	async getEnvironment(): Promise<IRemoteAgentEnvironment | null> { return null; }
 	async getRawEnvironment(): Promise<IRemoteAgentEnvironment | null> { return null; }
 	async getExtensionHostExitInfo(reconnectionToken: string): Promise<IExtensionHostExitInfo | null> { return null; }
+	async profileExtensionHost(reconnectionToken: string): Promise<string | undefined> { return undefined; }
 	async getDiagnosticInfo(options: IDiagnosticInfoOptions): Promise<IDiagnosticInfo | undefined> { return undefined; }
 	async updateTelemetryLevel(telemetryLevel: TelemetryLevel): Promise<void> { }
 	async logTelemetry(eventName: string, data?: ITelemetryData): Promise<void> { }

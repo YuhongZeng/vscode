@@ -30,6 +30,10 @@ export interface IRemoteAgentService {
 	 * Get exit information for a remote extension host.
 	 */
 	getExtensionHostExitInfo(reconnectionToken: string): Promise<IExtensionHostExitInfo | null>;
+	/**
+	 * Profiles a remote extension host on the remote server and returns the profile file path.
+	 */
+	profileExtensionHost(reconnectionToken: string): Promise<string | undefined>;
 
 	/**
 	 * Gets the round trip time from the remote extension host. Note that this

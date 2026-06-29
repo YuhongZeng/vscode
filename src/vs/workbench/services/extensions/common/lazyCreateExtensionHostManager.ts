@@ -44,6 +44,10 @@ export class LazyCreateExtensionHostManager extends Disposable implements IExten
 		return this._extensionHost.runningLocation.kind;
 	}
 
+	public get remoteConnectionToken(): string | undefined {
+		return this._extensionHost.remoteConnectionToken;
+	}
+
 	public get startup(): ExtensionHostStartup {
 		return this._extensionHost.startup;
 	}

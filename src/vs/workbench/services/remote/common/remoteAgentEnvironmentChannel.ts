@@ -25,6 +25,11 @@ export interface IGetExtensionHostExitInfoArguments {
 	reconnectionToken: string;
 }
 
+export interface IProfileExtensionHostArguments {
+	remoteAuthority: string;
+	reconnectionToken: string;
+}
+
 export interface IRemoteAgentEnvironmentDTO {
 	pid: number;
 	connectionToken: string;
@@ -92,6 +97,14 @@ export class RemoteExtensionEnvironmentChannelClient {
 			reconnectionToken
 		};
 		return channel.call<IExtensionHostExitInfo | null>('getExtensionHostExitInfo', args);
+	}
+
+	static async profileExtensionHost(channel: IChannel, remoteAuthority: string, reconnectionToken: string): Promise<string | undefined> {
+		const args: IProfileExtensionHostArguments = {
+			remoteAuthority,
+			reconnectionToken
+		};
+		return channel.call<string | undefined>('profileExtensionHost', args);
 	}
 
 	static getDiagnosticInfo(channel: IChannel, options: IDiagnosticInfoOptions): Promise<IDiagnosticInfo> {

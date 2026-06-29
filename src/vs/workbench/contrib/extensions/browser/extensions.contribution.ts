@@ -56,6 +56,7 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { EnablementState, IExtensionManagementServerService, IPublisherInfo, IWorkbenchExtensionEnablementService, IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
 import { IExtensionIgnoredRecommendationsService, IExtensionRecommendationsService } from '../../../services/extensionRecommendations/common/extensionRecommendations.js';
 import { IWorkspaceExtensionsConfigService } from '../../../services/extensionRecommendations/common/workspaceExtensionsConfig.js';
+import { remoteExtensionHostProfilingEnabledSetting } from '../../../services/extensions/common/extensionHostProfiling.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { IPreferencesService } from '../../../services/preferences/common/preferences.js';
@@ -82,6 +83,7 @@ import { ExtensionsCompletionItemsProvider } from './extensionsCompletionItemsPr
 import { ExtensionDependencyChecker } from './extensionsDependencyChecker.js';
 import { clearSearchResultsIcon, configureRecommendedIcon, extensionsViewIcon, filterIcon, installWorkspaceRecommendedIcon, refreshIcon } from './extensionsIcons.js';
 import { InstallExtensionQuickAccessProvider, ManageExtensionsQuickAccessProvider } from './extensionsQuickAccess.js';
+import { ExtensionsRemoteAutoProfiler } from './extensionsRemoteAutoProfiler.js';
 import { BuiltInExtensionsContext, ExtensionMarketplaceStatusUpdater, ExtensionsSearchValueContext, ExtensionsSortByContext, ExtensionsViewletViewsContribution, ExtensionsViewPaneContainer, MaliciousExtensionChecker, RecommendedExtensionsContext, SearchHasTextContext, SearchMarketplaceExtensionsContext, StatusUpdater } from './extensionsViewlet.js';
 import { ExtensionsWorkbenchService } from './extensionsWorkbenchService.js';
 import './media/extensionManagement.css';
@@ -194,6 +196,13 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
 				],
 				description: localize('extensionsWebWorker', "Enable web worker extension host."),
 				default: 'auto'
+			},
+			[remoteExtensionHostProfilingEnabledSetting]: {
+				type: 'boolean',
+				description: localize('extensions.remoteExtensionHostProfiling.enabled', "When enabled, the remote extension host process is monitored for unresponsiveness and a CPU profile is written on the remote server when it becomes blocked."),
+				default: false,
+				scope: ConfigurationScope.MACHINE,
+				tags: ['experimental']
 			},
 			'extensions.supportVirtualWorkspaces': {
 				type: 'object',
@@ -2041,6 +2050,7 @@ workbenchRegistry.registerWorkbenchContribution(ExtensionsCompletionItemsProvide
 workbenchRegistry.registerWorkbenchContribution(UnsupportedExtensionsMigrationContrib, LifecyclePhase.Eventually);
 workbenchRegistry.registerWorkbenchContribution(TrustedPublishersInitializer, LifecyclePhase.Eventually);
 workbenchRegistry.registerWorkbenchContribution(ExtensionMarketplaceStatusUpdater, LifecyclePhase.Eventually);
+workbenchRegistry.registerWorkbenchContribution(ExtensionsRemoteAutoProfiler, LifecyclePhase.Eventually);
 if (isWeb) {
 	workbenchRegistry.registerWorkbenchContribution(ExtensionStorageCleaner, LifecyclePhase.Eventually);
 }

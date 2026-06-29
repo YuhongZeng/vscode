@@ -123,6 +123,7 @@ export interface IExtensionHost {
 	readonly pid: number | null;
 	readonly runningLocation: ExtensionRunningLocation;
 	readonly remoteAuthority: string | null;
+	readonly remoteConnectionToken?: string;
 	readonly startup: ExtensionHostStartup;
 	/**
 	 * A collection of extensions which includes information about which
@@ -374,6 +375,7 @@ export interface IWillActivateEvent {
 export interface IResponsiveStateChangeEvent {
 	extensionHostKind: ExtensionHostKind;
 	isResponsive: boolean;
+	remoteConnectionToken?: string;
 	/**
 	 * Return the inspect port or `0`. `0` means inspection is not possible.
 	 */

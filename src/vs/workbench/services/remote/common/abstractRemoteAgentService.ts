@@ -81,6 +81,13 @@ export abstract class AbstractRemoteAgentService extends Disposable implements I
 		);
 	}
 
+	profileExtensionHost(reconnectionToken: string): Promise<string | undefined> {
+		return this._withChannel(
+			(channel, connection) => RemoteExtensionEnvironmentChannelClient.profileExtensionHost(channel, connection.remoteAuthority, reconnectionToken),
+			undefined
+		);
+	}
+
 	getDiagnosticInfo(options: IDiagnosticInfoOptions): Promise<IDiagnosticInfo | undefined> {
 		return this._withChannel(
 			channel => RemoteExtensionEnvironmentChannelClient.getDiagnosticInfo(channel, options),

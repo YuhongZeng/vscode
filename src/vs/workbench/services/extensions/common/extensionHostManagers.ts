@@ -16,6 +16,7 @@ import { ResponsiveState } from './rpcProtocol.js';
 export interface IExtensionHostManager {
 	readonly pid: number | null;
 	readonly kind: ExtensionHostKind;
+	readonly remoteConnectionToken?: string;
 	readonly startup: ExtensionHostStartup;
 	readonly friendyName: string;
 	readonly onDidExit: Event<[number, string | null]>;

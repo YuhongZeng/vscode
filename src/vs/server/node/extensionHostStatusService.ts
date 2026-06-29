@@ -13,12 +13,16 @@ export interface IExtensionHostStatusService {
 
 	setExitInfo(reconnectionToken: string, info: IExtensionHostExitInfo): void;
 	getExitInfo(reconnectionToken: string): IExtensionHostExitInfo | null;
+	setProfileHandler(reconnectionToken: string, handler: () => Promise<string | undefined>): void;
+	removeProfileHandler(reconnectionToken: string): void;
+	profile(reconnectionToken: string): Promise<string | undefined>;
 }
 
 export class ExtensionHostStatusService implements IExtensionHostStatusService {
 	_serviceBrand: undefined;
 
 	private readonly _exitInfo = new Map<string, IExtensionHostExitInfo>();
+	private readonly _profileHandlers = new Map<string, () => Promise<string | undefined>>();
 
 	setExitInfo(reconnectionToken: string, info: IExtensionHostExitInfo): void {
 		this._exitInfo.set(reconnectionToken, info);
@@ -26,5 +30,17 @@ export class ExtensionHostStatusService implements IExtensionHostStatusService {
 
 	getExitInfo(reconnectionToken: string): IExtensionHostExitInfo | null {
 		return this._exitInfo.get(reconnectionToken) || null;
+	}
+
+	setProfileHandler(reconnectionToken: string, handler: () => Promise<string | undefined>): void {
+		this._profileHandlers.set(reconnectionToken, handler);
+	}
+
+	removeProfileHandler(reconnectionToken: string): void {
+		this._profileHandlers.delete(reconnectionToken);
+	}
+
+	async profile(reconnectionToken: string): Promise<string | undefined> {
+		return this._profileHandlers.get(reconnectionToken)?.();
 	}
 }
