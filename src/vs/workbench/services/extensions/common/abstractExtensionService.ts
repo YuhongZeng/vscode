@@ -854,6 +854,11 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 				extensionHostKind: processManager.kind,
 				isResponsive: responsiveState === ResponsiveState.Responsive,
 				remoteConnectionToken: processManager.remoteConnectionToken,
+				remoteProfileExtensions: processManager.kind === ExtensionHostKind.Remote
+					? this._registry.getAllExtensionDescriptions()
+						.filter(extension => processManager.containsExtension(extension.identifier))
+						.map(extension => ({ id: ExtensionIdentifier.toKey(extension.identifier), location: extension.extensionLocation.path, main: extension.main }))
+					: undefined,
 				getInspectListener: (tryEnableInspector: boolean) => {
 					return processManager.getInspectPort(tryEnableInspector);
 				}

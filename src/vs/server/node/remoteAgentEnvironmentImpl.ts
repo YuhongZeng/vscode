@@ -56,7 +56,7 @@ export class RemoteAgentEnvironmentChannel implements IServerChannel {
 
 			case 'profileExtensionHost': {
 				const args = <IProfileExtensionHostArguments>arg;
-				return this._extensionHostStatusService.profile(args.reconnectionToken);
+				return this._extensionHostStatusService.profile(args.reconnectionToken, args.extensions);
 			}
 
 			case 'getDiagnosticInfo': {

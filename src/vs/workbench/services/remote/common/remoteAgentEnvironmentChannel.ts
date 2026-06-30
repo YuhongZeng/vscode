@@ -14,6 +14,7 @@ import { IExtensionHostExitInfo } from './remoteAgentService.js';
 import { revive } from '../../../../base/common/marshalling.js';
 import { IUserDataProfile } from '../../../../platform/userDataProfile/common/userDataProfile.js';
 import { ProtocolConstants } from '../../../../base/parts/ipc/common/ipc.net.js';
+import { IRemoteExtensionHostProfileExtension, IRemoteExtensionHostProfileResult } from '../../extensions/common/extensionHostProfiling.js';
 
 export interface IGetEnvironmentDataArguments {
 	remoteAuthority: string;
@@ -28,6 +29,7 @@ export interface IGetExtensionHostExitInfoArguments {
 export interface IProfileExtensionHostArguments {
 	remoteAuthority: string;
 	reconnectionToken: string;
+	extensions: readonly IRemoteExtensionHostProfileExtension[];
 }
 
 export interface IRemoteAgentEnvironmentDTO {
@@ -99,12 +101,13 @@ export class RemoteExtensionEnvironmentChannelClient {
 		return channel.call<IExtensionHostExitInfo | null>('getExtensionHostExitInfo', args);
 	}
 
-	static async profileExtensionHost(channel: IChannel, remoteAuthority: string, reconnectionToken: string): Promise<string | undefined> {
+	static async profileExtensionHost(channel: IChannel, remoteAuthority: string, reconnectionToken: string, extensions: readonly IRemoteExtensionHostProfileExtension[]): Promise<IRemoteExtensionHostProfileResult | undefined> {
 		const args: IProfileExtensionHostArguments = {
 			remoteAuthority,
-			reconnectionToken
+			reconnectionToken,
+			extensions
 		};
-		return channel.call<string | undefined>('profileExtensionHost', args);
+		return channel.call<IRemoteExtensionHostProfileResult | undefined>('profileExtensionHost', args);
 	}
 
 	static getDiagnosticInfo(channel: IChannel, options: IDiagnosticInfoOptions): Promise<IDiagnosticInfo> {

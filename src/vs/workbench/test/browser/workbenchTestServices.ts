@@ -169,6 +169,7 @@ import { IPaneCompositePartService } from '../../services/panecomposite/browser/
 import { IPathService } from '../../services/path/common/pathService.js';
 import { QuickInputService } from '../../services/quickinput/browser/quickInputService.js';
 import { IExtensionHostExitInfo, IRemoteAgentConnection, IRemoteAgentService } from '../../services/remote/common/remoteAgentService.js';
+import { IRemoteExtensionHostProfileExtension, IRemoteExtensionHostProfileResult } from '../../services/extensions/common/extensionHostProfiling.js';
 import { BrowserTextFileService } from '../../services/textfile/browser/browserTextFileService.js';
 import { EncodingOracle, IEncodingOverride } from '../../services/textfile/browser/textFileService.js';
 import { UTF16be, UTF16le, UTF8_with_bom } from '../../services/textfile/common/encoding.js';
@@ -1947,7 +1948,7 @@ export class TestRemoteAgentService implements IRemoteAgentService {
 	async getEnvironment(): Promise<IRemoteAgentEnvironment | null> { return null; }
 	async getRawEnvironment(): Promise<IRemoteAgentEnvironment | null> { return null; }
 	async getExtensionHostExitInfo(reconnectionToken: string): Promise<IExtensionHostExitInfo | null> { return null; }
-	async profileExtensionHost(reconnectionToken: string): Promise<string | undefined> { return undefined; }
+	async profileExtensionHost(reconnectionToken: string, extensions: readonly IRemoteExtensionHostProfileExtension[]): Promise<IRemoteExtensionHostProfileResult | undefined> { return undefined; }
 	async getDiagnosticInfo(options: IDiagnosticInfoOptions): Promise<IDiagnosticInfo | undefined> { return undefined; }
 	async updateTelemetryLevel(telemetryLevel: TelemetryLevel): Promise<void> { }
 	async logTelemetry(eventName: string, data?: ITelemetryData): Promise<void> { }

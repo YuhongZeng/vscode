@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { createDecorator } from '../../platform/instantiation/common/instantiation.js';
+import { IRemoteExtensionHostProfileExtension, IRemoteExtensionHostProfileResult } from '../../workbench/services/extensions/common/extensionHostProfiling.js';
 import { IExtensionHostExitInfo } from '../../workbench/services/remote/common/remoteAgentService.js';
 
 export const IExtensionHostStatusService = createDecorator<IExtensionHostStatusService>('extensionHostStatusService');
@@ -13,16 +14,16 @@ export interface IExtensionHostStatusService {
 
 	setExitInfo(reconnectionToken: string, info: IExtensionHostExitInfo): void;
 	getExitInfo(reconnectionToken: string): IExtensionHostExitInfo | null;
-	setProfileHandler(reconnectionToken: string, handler: () => Promise<string | undefined>): void;
+	setProfileHandler(reconnectionToken: string, handler: (extensions: readonly IRemoteExtensionHostProfileExtension[]) => Promise<IRemoteExtensionHostProfileResult | undefined>): void;
 	removeProfileHandler(reconnectionToken: string): void;
-	profile(reconnectionToken: string): Promise<string | undefined>;
+	profile(reconnectionToken: string, extensions: readonly IRemoteExtensionHostProfileExtension[]): Promise<IRemoteExtensionHostProfileResult | undefined>;
 }
 
 export class ExtensionHostStatusService implements IExtensionHostStatusService {
 	_serviceBrand: undefined;
 
 	private readonly _exitInfo = new Map<string, IExtensionHostExitInfo>();
-	private readonly _profileHandlers = new Map<string, () => Promise<string | undefined>>();
+	private readonly _profileHandlers = new Map<string, (extensions: readonly IRemoteExtensionHostProfileExtension[]) => Promise<IRemoteExtensionHostProfileResult | undefined>>();
 
 	setExitInfo(reconnectionToken: string, info: IExtensionHostExitInfo): void {
 		this._exitInfo.set(reconnectionToken, info);
@@ -32,7 +33,7 @@ export class ExtensionHostStatusService implements IExtensionHostStatusService {
 		return this._exitInfo.get(reconnectionToken) || null;
 	}
 
-	setProfileHandler(reconnectionToken: string, handler: () => Promise<string | undefined>): void {
+	setProfileHandler(reconnectionToken: string, handler: (extensions: readonly IRemoteExtensionHostProfileExtension[]) => Promise<IRemoteExtensionHostProfileResult | undefined>): void {
 		this._profileHandlers.set(reconnectionToken, handler);
 	}
 
@@ -40,7 +41,7 @@ export class ExtensionHostStatusService implements IExtensionHostStatusService {
 		this._profileHandlers.delete(reconnectionToken);
 	}
 
-	async profile(reconnectionToken: string): Promise<string | undefined> {
-		return this._profileHandlers.get(reconnectionToken)?.();
+	async profile(reconnectionToken: string, extensions: readonly IRemoteExtensionHostProfileExtension[]): Promise<IRemoteExtensionHostProfileResult | undefined> {
+		return this._profileHandlers.get(reconnectionToken)?.(extensions);
 	}
 }

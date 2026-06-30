@@ -20,6 +20,7 @@ import { ITelemetryData, TelemetryLevel } from '../../../../platform/telemetry/c
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IUserDataProfileService } from '../../userDataProfile/common/userDataProfile.js';
 import { IRemoteSocketFactoryService } from '../../../../platform/remote/common/remoteSocketFactoryService.js';
+import { IRemoteExtensionHostProfileExtension, IRemoteExtensionHostProfileResult } from '../../extensions/common/extensionHostProfiling.js';
 
 export abstract class AbstractRemoteAgentService extends Disposable implements IRemoteAgentService {
 
@@ -81,9 +82,9 @@ export abstract class AbstractRemoteAgentService extends Disposable implements I
 		);
 	}
 
-	profileExtensionHost(reconnectionToken: string): Promise<string | undefined> {
+	profileExtensionHost(reconnectionToken: string, extensions: readonly IRemoteExtensionHostProfileExtension[]): Promise<IRemoteExtensionHostProfileResult | undefined> {
 		return this._withChannel(
-			(channel, connection) => RemoteExtensionEnvironmentChannelClient.profileExtensionHost(channel, connection.remoteAuthority, reconnectionToken),
+			(channel, connection) => RemoteExtensionEnvironmentChannelClient.profileExtensionHost(channel, connection.remoteAuthority, reconnectionToken, extensions),
 			undefined
 		);
 	}

@@ -36,9 +36,15 @@ export class ExtensionsRemoteAutoProfiler extends Disposable implements IWorkben
 			return;
 		}
 
-		this._remoteAgentService.profileExtensionHost(event.remoteConnectionToken).then(profilePath => {
-			if (profilePath) {
-				this._logService.warn(`UNRESPONSIVE remote extension host: saved PROFILE here: '${profilePath}'`);
+		this._remoteAgentService.profileExtensionHost(event.remoteConnectionToken, event.remoteProfileExtensions ?? []).then(result => {
+			if (result) {
+				this._logService.warn(`UNRESPONSIVE remote extension host: saved PROFILE here: '${result.profilePath}'`);
+				if (result.topExtensionId) {
+					this._logService.warn(`UNRESPONSIVE remote extension host: top extension '${result.topExtensionId}', entry '${result.topExtensionEntryPoint ?? 'unknown'}', file '${result.topFile ?? 'unknown'}', extension location '${result.topExtensionLocation ?? 'unknown'}'`);
+				}
+				if (result.summaryPath) {
+					this._logService.warn(`UNRESPONSIVE remote extension host: saved PROFILE SUMMARY here: '${result.summaryPath}'`);
+				}
 			}
 		}, err => {
 			this._logService.error('UNRESPONSIVE remote extension host: failed to request CPU profile.');
