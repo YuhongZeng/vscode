@@ -14,6 +14,7 @@ import { ApiProposalName } from '../../../../platform/extensions/common/extensio
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IV8Profile } from '../../../../platform/profiling/common/profiling.js';
 import { ExtensionHostKind } from './extensionHostKind.js';
+import { IRemoteExtensionHostProfileExtension } from './extensionHostProfiling.js';
 import { IExtensionDescriptionDelta, IExtensionDescriptionSnapshot } from './extensionHostProtocol.js';
 import { ExtensionRunningLocation } from './extensionRunningLocation.js';
 import { IExtensionPoint } from './extensionsRegistry.js';
@@ -123,6 +124,7 @@ export interface IExtensionHost {
 	readonly pid: number | null;
 	readonly runningLocation: ExtensionRunningLocation;
 	readonly remoteAuthority: string | null;
+	readonly remoteConnectionToken?: string;
 	readonly startup: ExtensionHostStartup;
 	/**
 	 * A collection of extensions which includes information about which
@@ -374,6 +376,8 @@ export interface IWillActivateEvent {
 export interface IResponsiveStateChangeEvent {
 	extensionHostKind: ExtensionHostKind;
 	isResponsive: boolean;
+	remoteConnectionToken?: string;
+	remoteProfileExtensions?: IRemoteExtensionHostProfileExtension[];
 	/**
 	 * Return the inspect port or `0`. `0` means inspection is not possible.
 	 */

@@ -49,6 +49,7 @@ export class RemoteExtensionHost extends Disposable implements IExtensionHost {
 	public readonly pid = null;
 	public readonly remoteAuthority: string;
 	public readonly startup = ExtensionHostStartup.EagerAutoStart;
+	public remoteConnectionToken: string | undefined;
 	public extensions: ExtensionHostExtensions | null = null;
 
 	private _onExit: Emitter<[number, string | null]> = this._register(new Emitter<[number, string | null]>());
@@ -128,6 +129,7 @@ export class RemoteExtensionHost extends Disposable implements IExtensionHost {
 			return connectRemoteAgentExtensionHost(options, startParams).then(result => {
 				this._register(result);
 				const { protocol, debugPort, reconnectionToken } = result;
+				this.remoteConnectionToken = reconnectionToken;
 				const isExtensionDevelopmentDebug = typeof debugPort === 'number';
 				if (debugOk && this._environmentService.isExtensionDevelopment && this._environmentService.debugExtensionHost.debugId && debugPort) {
 					this._extensionHostDebugService.attachSession(this._environmentService.debugExtensionHost.debugId, debugPort, this._initDataProvider.remoteAuthority);

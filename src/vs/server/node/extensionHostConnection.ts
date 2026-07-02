@@ -5,16 +5,22 @@
 
 import * as cp from 'child_process';
 import * as net from 'net';
+import type { ProfilingSession } from 'v8-inspect-profiler';
 import { VSBuffer } from '../../base/common/buffer.js';
 import { Emitter, Event } from '../../base/common/event.js';
 import { Disposable, DisposableStore, toDisposable } from '../../base/common/lifecycle.js';
 import { FileAccess } from '../../base/common/network.js';
-import { delimiter, join } from '../../base/common/path.js';
+import { delimiter, join, posix } from '../../base/common/path.js';
 import { IProcessEnvironment, isWindows } from '../../base/common/platform.js';
+import { randomPort } from '../../base/common/ports.js';
 import { removeDangerousEnvVariables } from '../../base/common/processes.js';
+import { URI } from '../../base/common/uri.js';
+import { findFreePort } from '../../base/node/ports.js';
+import { Promises } from '../../base/node/pfs.js';
 import { createRandomIPCHandle, NodeSocket, WebSocketNodeSocket } from '../../base/parts/ipc/node/ipc.net.js';
 import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../platform/log/common/log.js';
+import { IV8Profile, IV8ProfileNode } from '../../platform/profiling/common/profiling.js';
 import { IRemoteExtensionHostStartParams } from '../../platform/remote/common/remoteAgentConnection.js';
 import { getResolvedShellEnv } from '../../platform/shell/node/shellEnv.js';
 import { IExtensionHostStatusService } from './extensionHostStatusService.js';
@@ -22,6 +28,7 @@ import { getNLSConfiguration } from './remoteLanguagePacks.js';
 import { IServerEnvironmentService } from './serverEnvironmentService.js';
 import { IPCExtHostConnection, SocketExtHostConnection, writeExtHostConnection } from '../../workbench/services/extensions/common/extensionHostEnv.js';
 import { IExtHostReadyMessage, IExtHostReduceGraceTimeMessage, IExtHostSocketMessage } from '../../workbench/services/extensions/common/extensionHostProtocol.js';
+import { IRemoteExtensionHostProfileExtension, IRemoteExtensionHostProfileResult, remoteExtensionHostProfileThrottleTime, remoteExtensionHostProfilingDuration, remoteExtensionHostProfilingEnabledSetting } from '../../workbench/services/extensions/common/extensionHostProfiling.js';
 
 export async function buildUserEnvironment(startParamsEnv: { [key: string]: string | null } = {}, withUserShellEnvironment: boolean, language: string, environmentService: IServerEnvironmentService, logService: ILogService, configurationService: IConfigurationService): Promise<IProcessEnvironment> {
 	const nlsConfig = await getNLSConfiguration(language, environmentService.userDataPath);
@@ -116,6 +123,10 @@ export class ExtensionHostConnection extends Disposable {
 	private _remoteAddress: string;
 	private _extensionHostProcess: cp.ChildProcess | null;
 	private _connectionData: ConnectionData | null;
+	private _extensionHostInspectPort: number | undefined;
+	private _extensionHostProfileSession: IRemoteExtensionHostProfileSession | undefined;
+	private _extensionHostProfileTimeout: Timeout | undefined;
+	private _lastExtensionHostProfileTime: number;
 
 	constructor(
 		private readonly _reconnectionToken: string,
@@ -133,6 +144,10 @@ export class ExtensionHostConnection extends Disposable {
 		this._remoteAddress = remoteAddress;
 		this._extensionHostProcess = null;
 		this._connectionData = new ConnectionData(socket, initialDataChunk);
+		this._extensionHostInspectPort = undefined;
+		this._extensionHostProfileSession = undefined;
+		this._extensionHostProfileTimeout = undefined;
+		this._lastExtensionHostProfileTime = 0;
 
 		this._log(`New connection established.`);
 	}
@@ -226,6 +241,8 @@ export class ExtensionHostConnection extends Disposable {
 			return;
 		}
 		this._disposed = true;
+		this._extensionHostStatusService.removeProfileHandler(this._reconnectionToken);
+		this._discardExtensionHostProfileSession();
 		if (this._connectionData) {
 			this._connectionData.socket.end();
 			this._connectionData = null;
@@ -237,15 +254,257 @@ export class ExtensionHostConnection extends Disposable {
 		this._onClose.fire(undefined);
 	}
 
+	private _isRemoteExtensionHostProfilingEnabled(): boolean {
+		return this._configurationService.getValue<boolean>(remoteExtensionHostProfilingEnabledSetting) === true;
+	}
+
+	private async _findInspectPort(): Promise<number | undefined> {
+		const port = await findFreePort(randomPort(), 50, 5000);
+		return port || undefined;
+	}
+
+	private _clearExtensionHostProfileTimeout(): void {
+		if (this._extensionHostProfileTimeout) {
+			clearTimeout(this._extensionHostProfileTimeout);
+			this._extensionHostProfileTimeout = undefined;
+		}
+	}
+
+	private _discardExtensionHostProfileSession(): void {
+		this._clearExtensionHostProfileTimeout();
+		const profileSession = this._extensionHostProfileSession;
+		this._extensionHostProfileSession = undefined;
+		if (profileSession) {
+			void profileSession.session.stop().then(undefined, err => this._logService.error(err));
+		}
+	}
+
+	public async startExtensionHostProfile(extensions: readonly IRemoteExtensionHostProfileExtension[]): Promise<boolean> {
+		if (!this._isRemoteExtensionHostProfilingEnabled()) {
+			return false;
+		}
+
+		const pid = this._extensionHostProcess?.pid;
+		if (!this._extensionHostInspectPort || typeof pid !== 'number') {
+			this._log('Remote Extension Host CPU profiling was requested, but no inspect port is available.');
+			return false;
+		}
+
+		if (this._extensionHostProfileSession) {
+			this._log(`<${pid}> Remote Extension Host CPU profiling is already in progress.`);
+			return true;
+		}
+
+		const now = Date.now();
+		if (now - this._lastExtensionHostProfileTime <= remoteExtensionHostProfileThrottleTime) {
+			this._log(`<${pid}> Remote Extension Host CPU profiling skipped because it was recently captured.`);
+			return false;
+		}
+
+		try {
+			const profiler = await import('v8-inspect-profiler');
+			this._log(`<${pid}> Starting Remote Extension Host CPU profile on 127.0.0.1:${this._extensionHostInspectPort}.`);
+			const session = await profiler.startProfiling({ host: '127.0.0.1', port: this._extensionHostInspectPort, checkForPaused: true });
+			this._extensionHostProfileSession = { session, extensions, pid };
+			this._lastExtensionHostProfileTime = now;
+			this._extensionHostProfileTimeout = setTimeout(() => {
+				void this._stopExtensionHostProfile('timeout').then(result => {
+					if (result) {
+						this._log(`<${pid}> Remote Extension Host CPU profile stopped after timeout.`);
+					}
+				});
+			}, remoteExtensionHostProfilingDuration * 2);
+			return true;
+		} catch (err) {
+			this._logError(`<${pid}> Failed to profile Remote Extension Host Process.`);
+			this._logService.error(err);
+			return false;
+		}
+	}
+
+	public async stopExtensionHostProfile(): Promise<IRemoteExtensionHostProfileResult | undefined> {
+		return this._stopExtensionHostProfile('responsive');
+	}
+
+	private async _stopExtensionHostProfile(reason: string): Promise<IRemoteExtensionHostProfileResult | undefined> {
+		const profileSession = this._extensionHostProfileSession;
+		if (!profileSession) {
+			return undefined;
+		}
+
+		this._extensionHostProfileSession = undefined;
+		this._clearExtensionHostProfileTimeout();
+		try {
+			this._log(`<${profileSession.pid}> Stopping Remote Extension Host CPU profile (${reason}).`);
+			const result = await profileSession.session.stop();
+			const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+			const profilePath = join(this._environmentService.logsHome.fsPath, `exthost-${profileSession.pid}-${timestamp}.cpuprofile`);
+			await Promises.writeFile(profilePath, JSON.stringify(result.profile));
+			const profileSummary = this._summarizeProfile(result.profile, profileSession.extensions);
+			const summaryPath = join(this._environmentService.logsHome.fsPath, `exthost-${profileSession.pid}-${timestamp}.summary.json`);
+			await Promises.writeFile(summaryPath, JSON.stringify(profileSummary, undefined, 2));
+			this._log(`<${profileSession.pid}> Saved Remote Extension Host CPU profile: ${profilePath}`);
+			this._log(`<${profileSession.pid}> Saved Remote Extension Host CPU profile summary: ${summaryPath}`);
+			if (profileSummary.topExtension) {
+				this._log(`<${profileSession.pid}> Remote Extension Host CPU profile top extension: ${profileSummary.topExtension.id}, file: ${profileSummary.topExtension.topFile ?? 'unknown'}, entry: ${profileSummary.topExtension.entryPoint ?? 'unknown'}, location: ${profileSummary.topExtension.location}`);
+			} else {
+				this._log(`<${profileSession.pid}> Remote Extension Host CPU profile did not match samples to a known extension.`);
+			}
+			return {
+				profilePath,
+				summaryPath,
+				topExtensionId: profileSummary.topExtension?.id,
+				topExtensionLocation: profileSummary.topExtension?.location,
+				topExtensionEntryPoint: profileSummary.topExtension?.entryPoint,
+				topExtensionTotalTime: profileSummary.topExtension?.totalTime,
+				topFile: profileSummary.topExtension?.topFile,
+				topFileTotalTime: profileSummary.topExtension?.topFileTotalTime
+			};
+		} catch (err) {
+			this._logError(`<${profileSession.pid}> Failed to stop profiling Remote Extension Host Process.`);
+			this._logService.error(err);
+			return undefined;
+		}
+	}
+
+	private _summarizeProfile(profile: IV8Profile, extensions: readonly IRemoteExtensionHostProfileExtension[]): IRemoteExtensionHostProfileSummary {
+		const normalizedExtensions = extensions
+			.map(extension => {
+				const entryPoint = extension.main ? joinProfilePaths(extension.location, extension.main) : undefined;
+				return {
+					id: extension.id,
+					location: extension.location,
+					main: extension.main,
+					entryPoint,
+					normalizedLocation: normalizeProfilePath(extension.location),
+					normalizedEntryPoint: entryPoint ? normalizeProfilePath(entryPoint) : undefined
+				};
+			})
+			.filter(extension => extension.normalizedLocation.length > 0)
+			.sort((a, b) => b.normalizedLocation.length - a.normalizedLocation.length);
+		const nodesById = new Map<number, IV8ProfileNode>();
+		const childIds = new Set<number>();
+		for (const node of profile.nodes) {
+			nodesById.set(node.id, node);
+			for (const child of node.children ?? []) {
+				childIds.add(child);
+			}
+		}
+
+		const extensionFrameByNodeId = new Map<number, IRemoteExtensionHostProfileMatchedFrame | undefined>();
+		const roots = profile.nodes.filter(node => !childIds.has(node.id));
+		if (roots.length === 0 && profile.nodes[0]) {
+			roots.push(profile.nodes[0]);
+		}
+
+		const stack = roots.map(node => ({ node, inherited: undefined as IRemoteExtensionHostProfileMatchedFrame | undefined, segment: undefined as ProfileSegmentId | undefined }));
+		while (stack.length > 0) {
+			const { node, inherited, segment } = stack.pop()!;
+			const matchedFrame = matchExtensionFrame(node.callFrame.url, normalizedExtensions) ?? inherited;
+			const nextSegment = matchedFrame ? undefined : segment ?? getProfileSegmentId(node);
+			extensionFrameByNodeId.set(node.id, matchedFrame ?? (nextSegment ? { segment: nextSegment } : undefined));
+			for (const child of node.children ?? []) {
+				const childNode = nodesById.get(child);
+				if (childNode) {
+					stack.push({ node: childNode, inherited: matchedFrame, segment: nextSegment });
+				}
+			}
+		}
+		for (const node of profile.nodes) {
+			if (!extensionFrameByNodeId.has(node.id)) {
+				const matchedFrame = matchExtensionFrame(node.callFrame.url, normalizedExtensions);
+				extensionFrameByNodeId.set(node.id, matchedFrame ?? { segment: getProfileSegmentId(node) ?? 'self' });
+			}
+		}
+
+		const extensionTotals = new Map<string, IRemoteExtensionHostProfileExtensionSummary>();
+		const extensionFileTotals = new Map<string, Map<string, IRemoteExtensionHostProfileFileSummary>>();
+		const unmatched = new Map<string, number>();
+		const samples = profile.samples ?? [];
+		const timeDeltas = profile.timeDeltas ?? [];
+		for (let i = 0; i < samples.length; i++) {
+			const node = nodesById.get(samples[i]);
+			const url = node?.callFrame.url;
+			const time = timeDeltas[i] ?? 0;
+			if (time <= 0) {
+				continue;
+			}
+
+			const matchedFrame = node ? extensionFrameByNodeId.get(node.id) : undefined;
+			if (!matchedFrame?.extension) {
+				const unmatchedUrl = url || matchedFrame?.segment || '(anonymous)';
+				unmatched.set(unmatchedUrl, (unmatched.get(unmatchedUrl) ?? 0) + time);
+				continue;
+			}
+
+			const extension = matchedFrame.extension;
+			let summary = extensionTotals.get(extension.id);
+			if (!summary) {
+				summary = {
+					id: extension.id,
+					location: extension.location,
+					main: extension.main,
+					entryPoint: extension.entryPoint,
+					normalizedLocation: extension.normalizedLocation,
+					normalizedEntryPoint: extension.normalizedEntryPoint,
+					totalTime: 0,
+					topFile: undefined,
+					topFileTotalTime: undefined,
+					files: []
+				};
+				extensionTotals.set(extension.id, summary);
+				extensionFileTotals.set(extension.id, new Map<string, IRemoteExtensionHostProfileFileSummary>());
+			}
+			summary.totalTime += time;
+
+			const files = extensionFileTotals.get(extension.id)!;
+			const fileKey = matchedFrame.normalizedUrl ?? extension.normalizedLocation;
+			const file = files.get(fileKey);
+			if (file) {
+				file.totalTime += time;
+			} else {
+				const newFile = { url: matchedFrame.url ?? extension.location, normalizedUrl: fileKey, totalTime: time };
+				files.set(fileKey, newFile);
+				summary.files.push(newFile);
+			}
+		}
+
+		const extensionSummaries = [...extensionTotals.values()]
+			.map(summary => {
+				summary.files.sort((a, b) => b.totalTime - a.totalTime);
+				summary.topFile = summary.files[0]?.url;
+				summary.topFileTotalTime = summary.files[0]?.totalTime;
+				return summary;
+			})
+			.sort((a, b) => b.totalTime - a.totalTime);
+		return {
+			extensionCandidates: normalizedExtensions,
+			extensions: extensionSummaries,
+			topExtension: extensionSummaries[0],
+			unmatched: [...unmatched.entries()]
+				.map(([url, totalTime]) => ({ url, normalizedUrl: normalizeProfilePath(url), totalTime }))
+				.sort((a, b) => b.totalTime - a.totalTime)
+				.slice(0, 50)
+		};
+	}
+
 	public async start(startParams: IRemoteExtensionHostStartParams): Promise<void> {
 		try {
 			let execArgv: string[] = process.execArgv ? process.execArgv.filter(a => !/^--inspect(-brk)?=/.test(a)) : [];
+			const enableRemoteExtensionHostProfiling = this._isRemoteExtensionHostProfilingEnabled() && typeof startParams.port !== 'number';
 			// eslint-disable-next-line local/code-no-any-casts, @typescript-eslint/no-explicit-any
 			if (startParams.port && !(<any>process).pkg) {
 				execArgv = [
 					`--inspect${startParams.break ? '-brk' : ''}=${startParams.port}`,
 					'--experimental-network-inspection'
 				];
+			} else if (enableRemoteExtensionHostProfiling && !(<any>process).pkg) {
+				this._extensionHostInspectPort = await this._findInspectPort();
+				if (this._extensionHostInspectPort) {
+					execArgv.unshift(`--inspect=127.0.0.1:${this._extensionHostInspectPort}`);
+				} else {
+					this._log('Could not find a free inspect port for remote extension host CPU profiling.');
+				}
 			}
 
 			const env = await buildUserEnvironment(startParams.env, true, startParams.language, this._environmentService, this._logService, this._configurationService);
@@ -281,6 +540,13 @@ export class ExtensionHostConnection extends Disposable {
 			this._extensionHostProcess = cp.fork(FileAccess.asFileUri('bootstrap-fork').fsPath, args, opts);
 			const pid = this._extensionHostProcess.pid;
 			this._log(`<${pid}> Launched Extension Host Process.`);
+			if (enableRemoteExtensionHostProfiling && this._extensionHostInspectPort && typeof pid === 'number') {
+				this._log(`<${pid}> Remote Extension Host CPU profiling enabled on 127.0.0.1:${this._extensionHostInspectPort}.`);
+				this._extensionHostStatusService.setProfileHandler(this._reconnectionToken, {
+					start: extensions => this.startExtensionHostProfile(extensions),
+					stop: () => this.stopExtensionHostProfile()
+				});
+			}
 
 			// Catch all output coming from the extension host process
 			this._extensionHostProcess.stdout!.setEncoding('utf8');
@@ -360,4 +626,113 @@ function removeNulls(env: { [key: string]: unknown | null }): void {
 			delete env[key];
 		}
 	}
+}
+
+interface IRemoteExtensionHostProfileSummary {
+	readonly extensionCandidates: IRemoteExtensionHostProfileNormalizedExtension[];
+	readonly extensions: IRemoteExtensionHostProfileExtensionSummary[];
+	readonly topExtension: IRemoteExtensionHostProfileExtensionSummary | undefined;
+	readonly unmatched: IRemoteExtensionHostProfileFileSummary[];
+}
+
+interface IRemoteExtensionHostProfileExtensionSummary {
+	readonly id: string;
+	readonly location: string;
+	readonly main: string | undefined;
+	readonly entryPoint: string | undefined;
+	readonly normalizedLocation: string;
+	readonly normalizedEntryPoint: string | undefined;
+	totalTime: number;
+	topFile: string | undefined;
+	topFileTotalTime: number | undefined;
+	readonly files: IRemoteExtensionHostProfileFileSummary[];
+}
+
+interface IRemoteExtensionHostProfileFileSummary {
+	readonly url: string;
+	readonly normalizedUrl: string;
+	totalTime: number;
+}
+
+interface IRemoteExtensionHostProfileNormalizedExtension {
+	readonly id: string;
+	readonly location: string;
+	readonly main: string | undefined;
+	readonly entryPoint: string | undefined;
+	readonly normalizedLocation: string;
+	readonly normalizedEntryPoint: string | undefined;
+}
+
+type ProfileSegmentId = 'program' | 'gc' | 'self';
+
+interface IRemoteExtensionHostProfileMatchedFrame {
+	readonly extension?: IRemoteExtensionHostProfileNormalizedExtension;
+	readonly url?: string;
+	readonly normalizedUrl?: string;
+	readonly segment?: ProfileSegmentId;
+}
+
+interface IRemoteExtensionHostProfileSession {
+	readonly session: ProfilingSession;
+	readonly extensions: readonly IRemoteExtensionHostProfileExtension[];
+	readonly pid: number;
+}
+
+function joinProfilePaths(parent: string, child: string): string {
+	if (/^\w[\w\d+.-]*:/.test(child)) {
+		return child;
+	}
+	return posix.join(parent.replace(/\\/g, '/'), child.replace(/\\/g, '/'));
+}
+
+function matchExtensionFrame(url: string | undefined, extensions: readonly IRemoteExtensionHostProfileNormalizedExtension[]): IRemoteExtensionHostProfileMatchedFrame | undefined {
+	if (!url) {
+		return undefined;
+	}
+
+	const normalizedUrl = normalizeProfilePath(url);
+	if (!normalizedUrl) {
+		return undefined;
+	}
+
+	const extension = extensions.find(candidate => isEqualOrParentProfilePath(normalizedUrl, candidate.normalizedLocation));
+	if (!extension) {
+		return undefined;
+	}
+
+	return {
+		extension,
+		url,
+		normalizedUrl
+	};
+}
+
+function getProfileSegmentId(node: IV8ProfileNode): ProfileSegmentId | undefined {
+	switch (node.callFrame.functionName) {
+		case '(root)':
+			return undefined;
+		case '(program)':
+			return 'program';
+		case '(garbage collector)':
+			return 'gc';
+		default:
+			return 'self';
+	}
+}
+
+function normalizeProfilePath(value: string): string {
+	try {
+		const url = URI.parse(value);
+		if (url.scheme === 'file' || url.scheme === 'vscode-remote') {
+			return normalizeProfilePath(url.path);
+		}
+	} catch {
+		// ignore
+	}
+	const normalizedPath = value.replace(/\\/g, '/').replace(/^\/([a-zA-Z]:\/)/, '$1').replace(/\/+$/g, '');
+	return isWindows ? normalizedPath.toLowerCase() : normalizedPath;
+}
+
+function isEqualOrParentProfilePath(candidate: string, parent: string): boolean {
+	return candidate === parent || candidate.startsWith(`${parent}/`);
 }

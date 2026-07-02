@@ -20,6 +20,7 @@ import { ITelemetryData, TelemetryLevel } from '../../../../platform/telemetry/c
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IUserDataProfileService } from '../../userDataProfile/common/userDataProfile.js';
 import { IRemoteSocketFactoryService } from '../../../../platform/remote/common/remoteSocketFactoryService.js';
+import { IRemoteExtensionHostProfileExtension, IRemoteExtensionHostProfileResult } from '../../extensions/common/extensionHostProfiling.js';
 
 export abstract class AbstractRemoteAgentService extends Disposable implements IRemoteAgentService {
 
@@ -78,6 +79,20 @@ export abstract class AbstractRemoteAgentService extends Disposable implements I
 		return this._withChannel(
 			(channel, connection) => RemoteExtensionEnvironmentChannelClient.getExtensionHostExitInfo(channel, connection.remoteAuthority, reconnectionToken),
 			null
+		);
+	}
+
+	startExtensionHostProfile(reconnectionToken: string, extensions: readonly IRemoteExtensionHostProfileExtension[]): Promise<boolean> {
+		return this._withChannel(
+			(channel, connection) => RemoteExtensionEnvironmentChannelClient.startExtensionHostProfile(channel, connection.remoteAuthority, reconnectionToken, extensions),
+			false
+		);
+	}
+
+	stopExtensionHostProfile(reconnectionToken: string): Promise<IRemoteExtensionHostProfileResult | undefined> {
+		return this._withChannel(
+			(channel, connection) => RemoteExtensionEnvironmentChannelClient.stopExtensionHostProfile(channel, connection.remoteAuthority, reconnectionToken),
+			undefined
 		);
 	}
 
