@@ -30,6 +30,14 @@ import { IPCExtHostConnection, SocketExtHostConnection, writeExtHostConnection }
 import { IExtHostReadyMessage, IExtHostReduceGraceTimeMessage, IExtHostSocketMessage } from '../../workbench/services/extensions/common/extensionHostProtocol.js';
 import { IRemoteExtensionHostProfileExtension, IRemoteExtensionHostProfileResult, remoteExtensionHostProfileThrottleTime, remoteExtensionHostProfilingDuration, remoteExtensionHostProfilingEnabledSetting } from '../../workbench/services/extensions/common/extensionHostProfiling.js';
 
+const remoteExtensionHostProfileSummaryMaxNodes = 200000;
+const remoteExtensionHostProfileSummaryMaxSamples = 500000;
+const remoteExtensionHostProfileSummaryMaxFilesPerExtension = 200;
+const remoteExtensionHostProfileSummaryTopFilesPerExtension = 50;
+const remoteExtensionHostProfileSummaryMaxUnmatchedEntries = 200;
+const remoteExtensionHostProfileNoFileIndex = -1;
+const remoteExtensionHostProfileOtherFilesIndex = -2;
+
 export async function buildUserEnvironment(startParamsEnv: { [key: string]: string | null } = {}, withUserShellEnvironment: boolean, language: string, environmentService: IServerEnvironmentService, logService: ILogService, configurationService: IConfigurationService): Promise<IProcessEnvironment> {
 	const nlsConfig = await getNLSConfiguration(language, environmentService.userDataPath);
 
@@ -340,12 +348,21 @@ export class ExtensionHostConnection extends Disposable {
 			const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 			const profilePath = join(this._environmentService.logsHome.fsPath, `exthost-${profileSession.pid}-${timestamp}.cpuprofile`);
 			await Promises.writeFile(profilePath, JSON.stringify(result.profile));
-			const profileSummary = this._summarizeProfile(result.profile, profileSession.extensions);
+			let profileSummary: IRemoteExtensionHostProfileSummary;
+			try {
+				profileSummary = this._summarizeProfile(result.profile, profileSession.extensions);
+			} catch (err) {
+				this._logError(`<${profileSession.pid}> Failed to summarize Remote Extension Host CPU profile.`);
+				this._logService.error(err);
+				profileSummary = createProfileSummary(result.profile, profileSession.extensions, 'summary failed');
+			}
 			const summaryPath = join(this._environmentService.logsHome.fsPath, `exthost-${profileSession.pid}-${timestamp}.summary.json`);
 			await Promises.writeFile(summaryPath, JSON.stringify(profileSummary, undefined, 2));
 			this._log(`<${profileSession.pid}> Saved Remote Extension Host CPU profile: ${profilePath}`);
 			this._log(`<${profileSession.pid}> Saved Remote Extension Host CPU profile summary: ${summaryPath}`);
-			if (profileSummary.topExtension) {
+			if (profileSummary.skippedReason) {
+				this._log(`<${profileSession.pid}> Remote Extension Host CPU profile summary skipped: ${profileSummary.skippedReason}.`);
+			} else if (profileSummary.topExtension) {
 				this._log(`<${profileSession.pid}> Remote Extension Host CPU profile top extension: ${profileSummary.topExtension.id}, file: ${profileSummary.topExtension.topFile ?? 'unknown'}, entry: ${profileSummary.topExtension.entryPoint ?? 'unknown'}, location: ${profileSummary.topExtension.location}`);
 			} else {
 				this._log(`<${profileSession.pid}> Remote Extension Host CPU profile did not match samples to a known extension.`);
@@ -368,116 +385,174 @@ export class ExtensionHostConnection extends Disposable {
 	}
 
 	private _summarizeProfile(profile: IV8Profile, extensions: readonly IRemoteExtensionHostProfileExtension[]): IRemoteExtensionHostProfileSummary {
-		const normalizedExtensions = extensions
-			.map(extension => {
-				const entryPoint = extension.main ? joinProfilePaths(extension.location, extension.main) : undefined;
-				return {
-					id: extension.id,
-					location: extension.location,
-					main: extension.main,
-					entryPoint,
-					normalizedLocation: normalizeProfilePath(extension.location),
-					normalizedEntryPoint: entryPoint ? normalizeProfilePath(entryPoint) : undefined
-				};
-			})
-			.filter(extension => extension.normalizedLocation.length > 0)
-			.sort((a, b) => b.normalizedLocation.length - a.normalizedLocation.length);
-		const nodesById = new Map<number, IV8ProfileNode>();
-		const childIds = new Set<number>();
-		for (const node of profile.nodes) {
-			nodesById.set(node.id, node);
-			for (const child of node.children ?? []) {
-				childIds.add(child);
+		if (profile.nodes.length > remoteExtensionHostProfileSummaryMaxNodes) {
+			return createProfileSummary(profile, extensions, `too many profile nodes (${profile.nodes.length})`);
+		}
+
+		const samples = profile.samples ?? [];
+		if (samples.length > remoteExtensionHostProfileSummaryMaxSamples) {
+			return createProfileSummary(profile, extensions, `too many profile samples (${samples.length})`);
+		}
+
+		const timeDeltas = profile.timeDeltas ?? [];
+		const normalizedExtensions = normalizeProfileExtensions(extensions);
+		const nodes = profile.nodes;
+		const nodeIndexById = new Map<number, number>();
+		for (let i = 0; i < nodes.length; i++) {
+			nodeIndexById.set(nodes[i].id, i);
+		}
+
+		const nodeExtensionIndexes = new Int32Array(nodes.length);
+		const nodeFileIndexes = new Int32Array(nodes.length);
+		const nodeSegmentCodes = new Int8Array(nodes.length);
+		const visited = new Uint8Array(nodes.length);
+		nodeExtensionIndexes.fill(-1);
+		nodeFileIndexes.fill(remoteExtensionHostProfileNoFileIndex);
+
+		const fileUrls: string[] = [];
+		const fileNormalizedUrls: string[] = [];
+		const fileKeyToIndex = new Map<string, number>();
+		const fileCountByExtension = new Int32Array(normalizedExtensions.length);
+		const getFileIndex = (extensionIndex: number, url: string, normalizedUrl: string): number => {
+			const key = `${extensionIndex}:${normalizedUrl}`;
+			let index = fileKeyToIndex.get(key);
+			if (typeof index === 'number') {
+				return index;
 			}
-		}
+			if (fileCountByExtension[extensionIndex] >= remoteExtensionHostProfileSummaryMaxFilesPerExtension) {
+				return remoteExtensionHostProfileOtherFilesIndex;
+			}
+			index = fileUrls.length;
+			fileCountByExtension[extensionIndex]++;
+			fileKeyToIndex.set(key, index);
+			fileUrls.push(url);
+			fileNormalizedUrls.push(normalizedUrl);
+			return index;
+		};
 
-		const extensionFrameByNodeId = new Map<number, IRemoteExtensionHostProfileMatchedFrame | undefined>();
-		const roots = profile.nodes.filter(node => !childIds.has(node.id));
-		if (roots.length === 0 && profile.nodes[0]) {
-			roots.push(profile.nodes[0]);
-		}
+		const stackNodeIndexes: number[] = [];
+		const stackExtensionIndexes: number[] = [];
+		const stackFileIndexes: number[] = [];
+		const stackSegmentCodes: ProfileSegmentCode[] = [];
 
-		const stack = roots.map(node => ({ node, inherited: undefined as IRemoteExtensionHostProfileMatchedFrame | undefined, segment: undefined as ProfileSegmentId | undefined }));
-		while (stack.length > 0) {
-			const { node, inherited, segment } = stack.pop()!;
-			const matchedFrame = matchExtensionFrame(node.callFrame.url, normalizedExtensions) ?? inherited;
-			const nextSegment = matchedFrame ? undefined : segment ?? getProfileSegmentId(node);
-			extensionFrameByNodeId.set(node.id, matchedFrame ?? (nextSegment ? { segment: nextSegment } : undefined));
-			for (const child of node.children ?? []) {
-				const childNode = nodesById.get(child);
-				if (childNode) {
-					stack.push({ node: childNode, inherited: matchedFrame, segment: nextSegment });
+		const visit = (startIndex: number): void => {
+			stackNodeIndexes.push(startIndex);
+			stackExtensionIndexes.push(-1);
+			stackFileIndexes.push(-1);
+			stackSegmentCodes.push(ProfileSegmentCode.None);
+
+			while (stackNodeIndexes.length > 0) {
+				const nodeIndex = stackNodeIndexes.pop()!;
+				let extensionIndex = stackExtensionIndexes.pop()!;
+				let fileIndex = stackFileIndexes.pop()!;
+				let segmentCode = stackSegmentCodes.pop()!;
+				if (visited[nodeIndex]) {
+					continue;
+				}
+				visited[nodeIndex] = 1;
+
+				const node = nodes[nodeIndex];
+				const matchedFrame = matchExtensionFrame(node.callFrame.url, normalizedExtensions);
+				if (matchedFrame) {
+					extensionIndex = matchedFrame.extensionIndex;
+					fileIndex = getFileIndex(extensionIndex, matchedFrame.url, matchedFrame.normalizedUrl);
+					segmentCode = ProfileSegmentCode.None;
+				} else if (extensionIndex < 0 && segmentCode === ProfileSegmentCode.None) {
+					segmentCode = getProfileSegmentCode(node);
+				}
+
+				nodeExtensionIndexes[nodeIndex] = extensionIndex;
+				nodeFileIndexes[nodeIndex] = fileIndex;
+				nodeSegmentCodes[nodeIndex] = segmentCode;
+
+				for (const child of node.children ?? []) {
+					const childIndex = nodeIndexById.get(child);
+					if (typeof childIndex === 'number' && !visited[childIndex]) {
+						stackNodeIndexes.push(childIndex);
+						stackExtensionIndexes.push(extensionIndex);
+						stackFileIndexes.push(fileIndex);
+						stackSegmentCodes.push(segmentCode);
+					}
 				}
 			}
+		};
+
+		if (nodes.length > 0) {
+			visit(0);
 		}
-		for (const node of profile.nodes) {
-			if (!extensionFrameByNodeId.has(node.id)) {
-				const matchedFrame = matchExtensionFrame(node.callFrame.url, normalizedExtensions);
-				extensionFrameByNodeId.set(node.id, matchedFrame ?? { segment: getProfileSegmentId(node) ?? 'self' });
+		for (let i = 0; i < nodes.length; i++) {
+			if (!visited[i]) {
+				visit(i);
 			}
 		}
 
-		const extensionTotals = new Map<string, IRemoteExtensionHostProfileExtensionSummary>();
-		const extensionFileTotals = new Map<string, Map<string, IRemoteExtensionHostProfileFileSummary>>();
+		const extensionTotalTimes = new Float64Array(normalizedExtensions.length);
+		const extensionFileTotals = new Map<number, Map<number, number>>();
 		const unmatched = new Map<string, number>();
-		const samples = profile.samples ?? [];
-		const timeDeltas = profile.timeDeltas ?? [];
 		for (let i = 0; i < samples.length; i++) {
-			const node = nodesById.get(samples[i]);
+			const nodeIndex = nodeIndexById.get(samples[i]);
+			const node = typeof nodeIndex === 'number' ? nodes[nodeIndex] : undefined;
 			const url = node?.callFrame.url;
 			const time = timeDeltas[i] ?? 0;
 			if (time <= 0) {
 				continue;
 			}
 
-			const matchedFrame = node ? extensionFrameByNodeId.get(node.id) : undefined;
-			if (!matchedFrame?.extension) {
-				const unmatchedUrl = url || matchedFrame?.segment || '(anonymous)';
-				unmatched.set(unmatchedUrl, (unmatched.get(unmatchedUrl) ?? 0) + time);
+			if (typeof nodeIndex !== 'number') {
+				addCappedTotal(unmatched, '(missing node)', time, remoteExtensionHostProfileSummaryMaxUnmatchedEntries, '(other unmatched)');
 				continue;
 			}
 
-			const extension = matchedFrame.extension;
-			let summary = extensionTotals.get(extension.id);
-			if (!summary) {
-				summary = {
-					id: extension.id,
-					location: extension.location,
-					main: extension.main,
-					entryPoint: extension.entryPoint,
-					normalizedLocation: extension.normalizedLocation,
-					normalizedEntryPoint: extension.normalizedEntryPoint,
-					totalTime: 0,
-					topFile: undefined,
-					topFileTotalTime: undefined,
-					files: []
-				};
-				extensionTotals.set(extension.id, summary);
-				extensionFileTotals.set(extension.id, new Map<string, IRemoteExtensionHostProfileFileSummary>());
+			const extensionIndex = nodeExtensionIndexes[nodeIndex];
+			if (extensionIndex < 0) {
+				const unmatchedUrl = url || getProfileSegmentName(nodeSegmentCodes[nodeIndex]) || '(anonymous)';
+				addCappedTotal(unmatched, unmatchedUrl, time, remoteExtensionHostProfileSummaryMaxUnmatchedEntries, '(other unmatched)');
+				continue;
 			}
-			summary.totalTime += time;
 
-			const files = extensionFileTotals.get(extension.id)!;
-			const fileKey = matchedFrame.normalizedUrl ?? extension.normalizedLocation;
-			const file = files.get(fileKey);
-			if (file) {
-				file.totalTime += time;
-			} else {
-				const newFile = { url: matchedFrame.url ?? extension.location, normalizedUrl: fileKey, totalTime: time };
-				files.set(fileKey, newFile);
-				summary.files.push(newFile);
+			extensionTotalTimes[extensionIndex] += time;
+			const fileIndex = nodeFileIndexes[nodeIndex];
+			if (fileIndex !== remoteExtensionHostProfileNoFileIndex) {
+				let files = extensionFileTotals.get(extensionIndex);
+				if (!files) {
+					files = new Map<number, number>();
+					extensionFileTotals.set(extensionIndex, files);
+				}
+				addCappedTotal(files, fileIndex, time, remoteExtensionHostProfileSummaryMaxFilesPerExtension, remoteExtensionHostProfileOtherFilesIndex);
 			}
 		}
 
-		const extensionSummaries = [...extensionTotals.values()]
-			.map(summary => {
-				summary.files.sort((a, b) => b.totalTime - a.totalTime);
-				summary.topFile = summary.files[0]?.url;
-				summary.topFileTotalTime = summary.files[0]?.totalTime;
-				return summary;
-			})
-			.sort((a, b) => b.totalTime - a.totalTime);
+		const extensionSummaries: IRemoteExtensionHostProfileExtensionSummary[] = [];
+		for (let extensionIndex = 0; extensionIndex < normalizedExtensions.length; extensionIndex++) {
+			const totalTime = extensionTotalTimes[extensionIndex];
+			if (totalTime <= 0) {
+				continue;
+			}
+			const extension = normalizedExtensions[extensionIndex];
+			const files = [...(extensionFileTotals.get(extensionIndex)?.entries() ?? [])]
+				.map(([fileIndex, totalTime]) => fileIndex === remoteExtensionHostProfileOtherFilesIndex
+					? { url: '(other extension files)', normalizedUrl: '(other)', totalTime }
+					: { url: fileUrls[fileIndex], normalizedUrl: fileNormalizedUrls[fileIndex], totalTime }
+				)
+				.sort((a, b) => b.totalTime - a.totalTime)
+				.slice(0, remoteExtensionHostProfileSummaryTopFilesPerExtension);
+			extensionSummaries.push({
+				id: extension.id,
+				location: extension.location,
+				main: extension.main,
+				entryPoint: extension.entryPoint,
+				normalizedLocation: extension.normalizedLocation,
+				normalizedEntryPoint: extension.normalizedEntryPoint,
+				totalTime,
+				topFile: files[0]?.url,
+				topFileTotalTime: files[0]?.totalTime,
+				files
+			});
+		}
+		extensionSummaries.sort((a, b) => b.totalTime - a.totalTime);
 		return {
+			nodeCount: nodes.length,
+			sampleCount: samples.length,
 			extensionCandidates: normalizedExtensions,
 			extensions: extensionSummaries,
 			topExtension: extensionSummaries[0],
@@ -629,6 +704,9 @@ function removeNulls(env: { [key: string]: unknown | null }): void {
 }
 
 interface IRemoteExtensionHostProfileSummary {
+	readonly nodeCount: number;
+	readonly sampleCount: number;
+	readonly skippedReason?: string;
 	readonly extensionCandidates: IRemoteExtensionHostProfileNormalizedExtension[];
 	readonly extensions: IRemoteExtensionHostProfileExtensionSummary[];
 	readonly topExtension: IRemoteExtensionHostProfileExtensionSummary | undefined;
@@ -666,16 +744,51 @@ interface IRemoteExtensionHostProfileNormalizedExtension {
 type ProfileSegmentId = 'program' | 'gc' | 'self';
 
 interface IRemoteExtensionHostProfileMatchedFrame {
-	readonly extension?: IRemoteExtensionHostProfileNormalizedExtension;
-	readonly url?: string;
-	readonly normalizedUrl?: string;
-	readonly segment?: ProfileSegmentId;
+	readonly extensionIndex: number;
+	readonly url: string;
+	readonly normalizedUrl: string;
 }
 
 interface IRemoteExtensionHostProfileSession {
 	readonly session: ProfilingSession;
 	readonly extensions: readonly IRemoteExtensionHostProfileExtension[];
 	readonly pid: number;
+}
+
+const enum ProfileSegmentCode {
+	None = 0,
+	Program = 1,
+	GC = 2,
+	Self = 3
+}
+
+function createProfileSummary(profile: IV8Profile, extensions: readonly IRemoteExtensionHostProfileExtension[], skippedReason: string): IRemoteExtensionHostProfileSummary {
+	return {
+		nodeCount: profile.nodes.length,
+		sampleCount: profile.samples?.length ?? 0,
+		skippedReason,
+		extensionCandidates: normalizeProfileExtensions(extensions),
+		extensions: [],
+		topExtension: undefined,
+		unmatched: []
+	};
+}
+
+function normalizeProfileExtensions(extensions: readonly IRemoteExtensionHostProfileExtension[]): IRemoteExtensionHostProfileNormalizedExtension[] {
+	return extensions
+		.map(extension => {
+			const entryPoint = extension.main ? joinProfilePaths(extension.location, extension.main) : undefined;
+			return {
+				id: extension.id,
+				location: extension.location,
+				main: extension.main,
+				entryPoint,
+				normalizedLocation: normalizeProfilePath(extension.location),
+				normalizedEntryPoint: entryPoint ? normalizeProfilePath(entryPoint) : undefined
+			};
+		})
+		.filter(extension => extension.normalizedLocation.length > 0)
+		.sort((a, b) => b.normalizedLocation.length - a.normalizedLocation.length);
 }
 
 function joinProfilePaths(parent: string, child: string): string {
@@ -695,28 +808,43 @@ function matchExtensionFrame(url: string | undefined, extensions: readonly IRemo
 		return undefined;
 	}
 
-	const extension = extensions.find(candidate => isEqualOrParentProfilePath(normalizedUrl, candidate.normalizedLocation));
-	if (!extension) {
-		return undefined;
+	for (let i = 0; i < extensions.length; i++) {
+		const extension = extensions[i];
+		if (isEqualOrParentProfilePath(normalizedUrl, extension.normalizedLocation)) {
+			return {
+				extensionIndex: i,
+				url,
+				normalizedUrl
+			};
+		}
 	}
 
-	return {
-		extension,
-		url,
-		normalizedUrl
-	};
+	return undefined;
 }
 
-function getProfileSegmentId(node: IV8ProfileNode): ProfileSegmentId | undefined {
+function getProfileSegmentCode(node: IV8ProfileNode): ProfileSegmentCode {
 	switch (node.callFrame.functionName) {
 		case '(root)':
-			return undefined;
+			return ProfileSegmentCode.None;
 		case '(program)':
-			return 'program';
+			return ProfileSegmentCode.Program;
 		case '(garbage collector)':
-			return 'gc';
+			return ProfileSegmentCode.GC;
 		default:
+			return ProfileSegmentCode.Self;
+	}
+}
+
+function getProfileSegmentName(segmentCode: ProfileSegmentCode): ProfileSegmentId | undefined {
+	switch (segmentCode) {
+		case ProfileSegmentCode.Program:
+			return 'program';
+		case ProfileSegmentCode.GC:
+			return 'gc';
+		case ProfileSegmentCode.Self:
 			return 'self';
+		default:
+			return undefined;
 	}
 }
 
@@ -735,4 +863,12 @@ function normalizeProfilePath(value: string): string {
 
 function isEqualOrParentProfilePath(candidate: string, parent: string): boolean {
 	return candidate === parent || candidate.startsWith(`${parent}/`);
+}
+
+function addCappedTotal<TKey>(map: Map<TKey, number>, key: TKey, value: number, limit: number, overflowKey: TKey): void {
+	if (map.has(key) || map.size < limit) {
+		map.set(key, (map.get(key) ?? 0) + value);
+	} else {
+		map.set(overflowKey, (map.get(overflowKey) ?? 0) + value);
+	}
 }
