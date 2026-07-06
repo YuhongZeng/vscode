@@ -14,6 +14,7 @@ import { delimiter, join, posix } from '../../base/common/path.js';
 import { IProcessEnvironment, isWindows } from '../../base/common/platform.js';
 import { randomPort } from '../../base/common/ports.js';
 import { removeDangerousEnvVariables } from '../../base/common/processes.js';
+import { TernarySearchTree } from '../../base/common/ternarySearchTree.js';
 import { URI } from '../../base/common/uri.js';
 import { findFreePort } from '../../base/node/ports.js';
 import { Promises } from '../../base/node/pfs.js';
@@ -35,6 +36,7 @@ const remoteExtensionHostProfileSummaryMaxSamples = 500000;
 const remoteExtensionHostProfileSummaryMaxFilesPerExtension = 200;
 const remoteExtensionHostProfileSummaryTopFilesPerExtension = 50;
 const remoteExtensionHostProfileSummaryMaxUnmatchedEntries = 200;
+const remoteExtensionHostProfileSummaryMaxNormalizedUrlCacheEntries = 10000;
 const remoteExtensionHostProfileNoFileIndex = -1;
 const remoteExtensionHostProfileOtherFilesIndex = -2;
 
@@ -396,6 +398,22 @@ export class ExtensionHostConnection extends Disposable {
 
 		const timeDeltas = profile.timeDeltas ?? [];
 		const normalizedExtensions = normalizeProfileExtensions(extensions);
+		const extensionPathTree = TernarySearchTree.forPaths<number>(isWindows);
+		for (let i = 0; i < normalizedExtensions.length; i++) {
+			extensionPathTree.set(normalizedExtensions[i].normalizedLocation, i + 1);
+		}
+		const normalizedUrlCache = new Map<string, string>();
+		const normalizeUrl = (url: string): string => {
+			const cached = normalizedUrlCache.get(url);
+			if (typeof cached === 'string') {
+				return cached;
+			}
+			const normalizedUrl = normalizeProfilePath(url);
+			if (normalizedUrlCache.size < remoteExtensionHostProfileSummaryMaxNormalizedUrlCacheEntries) {
+				normalizedUrlCache.set(url, normalizedUrl);
+			}
+			return normalizedUrl;
+		};
 		const nodes = profile.nodes;
 		const nodeIndexById = new Map<number, number>();
 		for (let i = 0; i < nodes.length; i++) {
@@ -452,7 +470,7 @@ export class ExtensionHostConnection extends Disposable {
 				visited[nodeIndex] = 1;
 
 				const node = nodes[nodeIndex];
-				const matchedFrame = matchExtensionFrame(node.callFrame.url, normalizedExtensions);
+				const matchedFrame = matchExtensionFrame(node.callFrame.url, extensionPathTree, normalizeUrl);
 				if (matchedFrame) {
 					extensionIndex = matchedFrame.extensionIndex;
 					fileIndex = getFileIndex(extensionIndex, matchedFrame.url, matchedFrame.normalizedUrl);
@@ -553,6 +571,7 @@ export class ExtensionHostConnection extends Disposable {
 		return {
 			nodeCount: nodes.length,
 			sampleCount: samples.length,
+			extensionCandidateCount: extensions.length,
 			extensionCandidates: normalizedExtensions,
 			extensions: extensionSummaries,
 			topExtension: extensionSummaries[0],
@@ -707,6 +726,7 @@ interface IRemoteExtensionHostProfileSummary {
 	readonly nodeCount: number;
 	readonly sampleCount: number;
 	readonly skippedReason?: string;
+	readonly extensionCandidateCount?: number;
 	readonly extensionCandidates: IRemoteExtensionHostProfileNormalizedExtension[];
 	readonly extensions: IRemoteExtensionHostProfileExtensionSummary[];
 	readonly topExtension: IRemoteExtensionHostProfileExtensionSummary | undefined;
@@ -767,7 +787,8 @@ function createProfileSummary(profile: IV8Profile, extensions: readonly IRemoteE
 		nodeCount: profile.nodes.length,
 		sampleCount: profile.samples?.length ?? 0,
 		skippedReason,
-		extensionCandidates: normalizeProfileExtensions(extensions),
+		extensionCandidateCount: extensions.length,
+		extensionCandidates: [],
 		extensions: [],
 		topExtension: undefined,
 		unmatched: []
@@ -798,25 +819,23 @@ function joinProfilePaths(parent: string, child: string): string {
 	return posix.join(parent.replace(/\\/g, '/'), child.replace(/\\/g, '/'));
 }
 
-function matchExtensionFrame(url: string | undefined, extensions: readonly IRemoteExtensionHostProfileNormalizedExtension[]): IRemoteExtensionHostProfileMatchedFrame | undefined {
+function matchExtensionFrame(url: string | undefined, extensionPathTree: TernarySearchTree<string, number>, normalizeUrl: (url: string) => string): IRemoteExtensionHostProfileMatchedFrame | undefined {
 	if (!url) {
 		return undefined;
 	}
 
-	const normalizedUrl = normalizeProfilePath(url);
+	const normalizedUrl = normalizeUrl(url);
 	if (!normalizedUrl) {
 		return undefined;
 	}
 
-	for (let i = 0; i < extensions.length; i++) {
-		const extension = extensions[i];
-		if (isEqualOrParentProfilePath(normalizedUrl, extension.normalizedLocation)) {
-			return {
-				extensionIndex: i,
-				url,
-				normalizedUrl
-			};
-		}
+	const extensionIndex = extensionPathTree.findSubstr(normalizedUrl);
+	if (typeof extensionIndex === 'number') {
+		return {
+			extensionIndex: extensionIndex - 1,
+			url,
+			normalizedUrl
+		};
 	}
 
 	return undefined;
@@ -859,10 +878,6 @@ function normalizeProfilePath(value: string): string {
 	}
 	const normalizedPath = value.replace(/\\/g, '/').replace(/^\/([a-zA-Z]:\/)/, '$1').replace(/\/+$/g, '');
 	return isWindows ? normalizedPath.toLowerCase() : normalizedPath;
-}
-
-function isEqualOrParentProfilePath(candidate: string, parent: string): boolean {
-	return candidate === parent || candidate.startsWith(`${parent}/`);
 }
 
 function addCappedTotal<TKey>(map: Map<TKey, number>, key: TKey, value: number, limit: number, overflowKey: TKey): void {
