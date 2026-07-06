@@ -5,13 +5,17 @@
 
 import * as cp from 'child_process';
 import * as net from 'net';
+import type { ProfilingSession } from 'v8-inspect-profiler';
 import { VSBuffer } from '../../base/common/buffer.js';
 import { Emitter, Event } from '../../base/common/event.js';
 import { Disposable, DisposableStore, toDisposable } from '../../base/common/lifecycle.js';
 import { FileAccess } from '../../base/common/network.js';
 import { delimiter, join } from '../../base/common/path.js';
 import { IProcessEnvironment, isWindows } from '../../base/common/platform.js';
+import { randomPort } from '../../base/common/ports.js';
 import { removeDangerousEnvVariables } from '../../base/common/processes.js';
+import { findFreePort } from '../../base/node/ports.js';
+import { Promises } from '../../base/node/pfs.js';
 import { createRandomIPCHandle, NodeSocket, WebSocketNodeSocket } from '../../base/parts/ipc/node/ipc.net.js';
 import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../platform/log/common/log.js';
@@ -22,6 +26,7 @@ import { getNLSConfiguration } from './remoteLanguagePacks.js';
 import { IServerEnvironmentService } from './serverEnvironmentService.js';
 import { IPCExtHostConnection, SocketExtHostConnection, writeExtHostConnection } from '../../workbench/services/extensions/common/extensionHostEnv.js';
 import { IExtHostReadyMessage, IExtHostReduceGraceTimeMessage, IExtHostSocketMessage } from '../../workbench/services/extensions/common/extensionHostProtocol.js';
+import { IRemoteExtensionHostProfileResult, remoteExtensionHostProfileMinDuration, remoteExtensionHostProfileThrottleTime, remoteExtensionHostProfilingDuration, remoteExtensionHostProfilingEnabledSetting } from '../../workbench/services/extensions/common/extensionHostProfiling.js';
 
 export async function buildUserEnvironment(startParamsEnv: { [key: string]: string | null } = {}, withUserShellEnvironment: boolean, language: string, environmentService: IServerEnvironmentService, logService: ILogService, configurationService: IConfigurationService): Promise<IProcessEnvironment> {
 	const nlsConfig = await getNLSConfiguration(language, environmentService.userDataPath);
@@ -116,6 +121,10 @@ export class ExtensionHostConnection extends Disposable {
 	private _remoteAddress: string;
 	private _extensionHostProcess: cp.ChildProcess | null;
 	private _connectionData: ConnectionData | null;
+	private _extensionHostInspectPort: number | undefined;
+	private _extensionHostProfileSession: IRemoteExtensionHostProfileSession | undefined;
+	private _extensionHostProfileTimeout: Timeout | undefined;
+	private _lastExtensionHostProfileTime: number;
 
 	constructor(
 		private readonly _reconnectionToken: string,
@@ -133,6 +142,10 @@ export class ExtensionHostConnection extends Disposable {
 		this._remoteAddress = remoteAddress;
 		this._extensionHostProcess = null;
 		this._connectionData = new ConnectionData(socket, initialDataChunk);
+		this._extensionHostInspectPort = undefined;
+		this._extensionHostProfileSession = undefined;
+		this._extensionHostProfileTimeout = undefined;
+		this._lastExtensionHostProfileTime = 0;
 
 		this._log(`New connection established.`);
 	}
@@ -226,6 +239,8 @@ export class ExtensionHostConnection extends Disposable {
 			return;
 		}
 		this._disposed = true;
+		this._extensionHostStatusService.removeProfileHandler(this._reconnectionToken);
+		this._discardExtensionHostProfileSession();
 		if (this._connectionData) {
 			this._connectionData.socket.end();
 			this._connectionData = null;
@@ -237,15 +252,125 @@ export class ExtensionHostConnection extends Disposable {
 		this._onClose.fire(undefined);
 	}
 
+	private _isRemoteExtensionHostProfilingEnabled(): boolean {
+		return this._configurationService.getValue<boolean>(remoteExtensionHostProfilingEnabledSetting) === true;
+	}
+
+	private async _findInspectPort(): Promise<number | undefined> {
+		const port = await findFreePort(randomPort(), 50, 5000);
+		return port || undefined;
+	}
+
+	private _clearExtensionHostProfileTimeout(): void {
+		if (this._extensionHostProfileTimeout) {
+			clearTimeout(this._extensionHostProfileTimeout);
+			this._extensionHostProfileTimeout = undefined;
+		}
+	}
+
+	private _discardExtensionHostProfileSession(): void {
+		this._clearExtensionHostProfileTimeout();
+		const profileSession = this._extensionHostProfileSession;
+		this._extensionHostProfileSession = undefined;
+		if (profileSession) {
+			void profileSession.session.stop().then(undefined, err => this._logService.error(err));
+		}
+	}
+
+	public async startExtensionHostProfile(): Promise<boolean> {
+		if (!this._isRemoteExtensionHostProfilingEnabled()) {
+			return false;
+		}
+
+		const pid = this._extensionHostProcess?.pid;
+		if (!this._extensionHostInspectPort || typeof pid !== 'number') {
+			this._log('Remote Extension Host CPU profiling was requested, but no inspect port is available.');
+			return false;
+		}
+
+		if (this._extensionHostProfileSession) {
+			this._log(`<${pid}> Remote Extension Host CPU profiling is already in progress.`);
+			return true;
+		}
+
+		const now = Date.now();
+		if (now - this._lastExtensionHostProfileTime <= remoteExtensionHostProfileThrottleTime) {
+			this._log(`<${pid}> Remote Extension Host CPU profiling skipped because it was recently captured.`);
+			return false;
+		}
+
+		try {
+			const profiler = await import('v8-inspect-profiler');
+			this._log(`<${pid}> Starting Remote Extension Host CPU profile on 127.0.0.1:${this._extensionHostInspectPort}.`);
+			const session = await profiler.startProfiling({ host: '127.0.0.1', port: this._extensionHostInspectPort, checkForPaused: true });
+			this._extensionHostProfileSession = { session, pid, startTime: Date.now() };
+			this._extensionHostProfileTimeout = setTimeout(() => {
+				void this._stopExtensionHostProfile('timeout').then(result => {
+					if (result) {
+						this._log(`<${pid}> Remote Extension Host CPU profile stopped after timeout.`);
+					}
+				});
+			}, remoteExtensionHostProfilingDuration * 2);
+			return true;
+		} catch (err) {
+			this._logError(`<${pid}> Failed to profile Remote Extension Host Process.`);
+			this._logService.error(err);
+			return false;
+		}
+	}
+
+	public async stopExtensionHostProfile(): Promise<IRemoteExtensionHostProfileResult | undefined> {
+		return this._stopExtensionHostProfile('responsive');
+	}
+
+	private async _stopExtensionHostProfile(reason: string): Promise<IRemoteExtensionHostProfileResult | undefined> {
+		const profileSession = this._extensionHostProfileSession;
+		if (!profileSession) {
+			return undefined;
+		}
+
+		this._extensionHostProfileSession = undefined;
+		this._clearExtensionHostProfileTimeout();
+		try {
+			this._log(`<${profileSession.pid}> Stopping Remote Extension Host CPU profile (${reason}).`);
+			const result = await profileSession.session.stop();
+			const duration = Date.now() - profileSession.startTime;
+			if (duration < remoteExtensionHostProfileMinDuration) {
+				this._log(`<${profileSession.pid}> Remote Extension Host CPU profile skipped because it was too short (${duration}ms).`);
+				return undefined;
+			}
+			const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+			const profilePath = join(this._environmentService.logsHome.fsPath, `exthost-${profileSession.pid}-${timestamp}.cpuprofile`);
+			await Promises.writeFile(profilePath, JSON.stringify(result.profile));
+			this._lastExtensionHostProfileTime = Date.now();
+			this._log(`<${profileSession.pid}> Saved Remote Extension Host CPU profile: ${profilePath}`);
+			return {
+				profilePath
+			};
+		} catch (err) {
+			this._logError(`<${profileSession.pid}> Failed to stop profiling Remote Extension Host Process.`);
+			this._logService.error(err);
+			return undefined;
+		}
+	}
+
 	public async start(startParams: IRemoteExtensionHostStartParams): Promise<void> {
 		try {
 			let execArgv: string[] = process.execArgv ? process.execArgv.filter(a => !/^--inspect(-brk)?=/.test(a)) : [];
+			const enableRemoteExtensionHostProfiling = this._isRemoteExtensionHostProfilingEnabled() && typeof startParams.port !== 'number';
 			// eslint-disable-next-line local/code-no-any-casts, @typescript-eslint/no-explicit-any
 			if (startParams.port && !(<any>process).pkg) {
 				execArgv = [
 					`--inspect${startParams.break ? '-brk' : ''}=${startParams.port}`,
 					'--experimental-network-inspection'
 				];
+			} else if (enableRemoteExtensionHostProfiling && !(<any>process).pkg) {
+				this._extensionHostInspectPort = await this._findInspectPort();
+				if (this._extensionHostInspectPort) {
+					execArgv.unshift(`--inspect=127.0.0.1:${this._extensionHostInspectPort}`);
+				} else {
+					this._log('Could not find a free inspect port for remote extension host CPU profiling.');
+				}
 			}
 
 			const env = await buildUserEnvironment(startParams.env, true, startParams.language, this._environmentService, this._logService, this._configurationService);
@@ -281,6 +406,13 @@ export class ExtensionHostConnection extends Disposable {
 			this._extensionHostProcess = cp.fork(FileAccess.asFileUri('bootstrap-fork').fsPath, args, opts);
 			const pid = this._extensionHostProcess.pid;
 			this._log(`<${pid}> Launched Extension Host Process.`);
+			if (enableRemoteExtensionHostProfiling && this._extensionHostInspectPort && typeof pid === 'number') {
+				this._log(`<${pid}> Remote Extension Host CPU profiling enabled on 127.0.0.1:${this._extensionHostInspectPort}.`);
+				this._extensionHostStatusService.setProfileHandler(this._reconnectionToken, {
+					start: () => this.startExtensionHostProfile(),
+					stop: () => this.stopExtensionHostProfile()
+				});
+			}
 
 			// Catch all output coming from the extension host process
 			this._extensionHostProcess.stdout!.setEncoding('utf8');
@@ -360,4 +492,10 @@ function removeNulls(env: { [key: string]: unknown | null }): void {
 			delete env[key];
 		}
 	}
+}
+
+interface IRemoteExtensionHostProfileSession {
+	readonly session: ProfilingSession;
+	readonly pid: number;
+	readonly startTime: number;
 }

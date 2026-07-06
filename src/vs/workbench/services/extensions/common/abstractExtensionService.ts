@@ -853,6 +853,7 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 			this._onDidChangeResponsiveChange.fire({
 				extensionHostKind: processManager.kind,
 				isResponsive: responsiveState === ResponsiveState.Responsive,
+				remoteConnectionToken: processManager.remoteConnectionToken,
 				getInspectListener: (tryEnableInspector: boolean) => {
 					return processManager.getInspectPort(tryEnableInspector);
 				}

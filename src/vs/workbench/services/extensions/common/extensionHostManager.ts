@@ -88,6 +88,10 @@ export class ExtensionHostManager extends Disposable implements IExtensionHostMa
 		return friendlyExtHostName(this.kind, this.pid);
 	}
 
+	public get remoteConnectionToken(): string | undefined {
+		return this._extensionHost.remoteConnectionToken;
+	}
+
 	constructor(
 		extensionHost: IExtensionHost,
 		initialActivationEvents: string[],

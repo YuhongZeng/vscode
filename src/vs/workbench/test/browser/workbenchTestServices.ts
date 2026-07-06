@@ -155,6 +155,7 @@ import { IEditorsChangeEvent, IEditorService, IRevertAllEditorsOptions, ISaveEdi
 import { BrowserWorkbenchEnvironmentService } from '../../services/environment/browser/environmentService.js';
 import { IWorkbenchEnvironmentService } from '../../services/environment/common/environmentService.js';
 import { EnablementState, IExtensionManagementServer, IResourceExtension, IScannedExtension, IWebExtensionsScannerService, IWorkbenchExtensionEnablementService, IWorkbenchExtensionManagementService } from '../../services/extensionManagement/common/extensionManagement.js';
+import { IRemoteExtensionHostProfileResult } from '../../services/extensions/common/extensionHostProfiling.js';
 import { IExtensionService } from '../../services/extensions/common/extensions.js';
 import { BrowserElevatedFileService } from '../../services/files/browser/elevatedFileService.js';
 import { IElevatedFileService } from '../../services/files/common/elevatedFileService.js';
@@ -1947,6 +1948,8 @@ export class TestRemoteAgentService implements IRemoteAgentService {
 	async getEnvironment(): Promise<IRemoteAgentEnvironment | null> { return null; }
 	async getRawEnvironment(): Promise<IRemoteAgentEnvironment | null> { return null; }
 	async getExtensionHostExitInfo(reconnectionToken: string): Promise<IExtensionHostExitInfo | null> { return null; }
+	async startExtensionHostProfile(reconnectionToken: string): Promise<boolean> { return false; }
+	async stopExtensionHostProfile(reconnectionToken: string): Promise<IRemoteExtensionHostProfileResult | undefined> { return undefined; }
 	async getDiagnosticInfo(options: IDiagnosticInfoOptions): Promise<IDiagnosticInfo | undefined> { return undefined; }
 	async updateTelemetryLevel(telemetryLevel: TelemetryLevel): Promise<void> { }
 	async logTelemetry(eventName: string, data?: ITelemetryData): Promise<void> { }

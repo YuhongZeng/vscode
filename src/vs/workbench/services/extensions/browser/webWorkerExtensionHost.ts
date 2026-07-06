@@ -47,6 +47,7 @@ export class WebWorkerExtensionHost extends Disposable implements IExtensionHost
 
 	public readonly pid = null;
 	public readonly remoteAuthority = null;
+	public readonly remoteConnectionToken = undefined;
 	public extensions: ExtensionHostExtensions | null = null;
 
 	private readonly _onDidExit = this._register(new Emitter<[number, string | null]>());

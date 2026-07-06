@@ -8,7 +8,7 @@ import * as platform from '../../base/common/platform.js';
 import * as performance from '../../base/common/performance.js';
 import { URI } from '../../base/common/uri.js';
 import { createURITransformer } from '../../base/common/uriTransformer.js';
-import { IRemoteAgentEnvironmentDTO, IGetEnvironmentDataArguments, IGetExtensionHostExitInfoArguments } from '../../workbench/services/remote/common/remoteAgentEnvironmentChannel.js';
+import { IRemoteAgentEnvironmentDTO, IGetEnvironmentDataArguments, IGetExtensionHostExitInfoArguments, IStartExtensionHostProfileArguments, IStopExtensionHostProfileArguments } from '../../workbench/services/remote/common/remoteAgentEnvironmentChannel.js';
 import { IServerEnvironmentService } from './serverEnvironmentService.js';
 import { IServerChannel } from '../../base/parts/ipc/common/ipc.js';
 import { transformOutgoingURIs } from '../../base/common/uriIpc.js';
@@ -52,6 +52,16 @@ export class RemoteAgentEnvironmentChannel implements IServerChannel {
 			case 'getExtensionHostExitInfo': {
 				const args = <IGetExtensionHostExitInfoArguments>arg;
 				return this._extensionHostStatusService.getExitInfo(args.reconnectionToken);
+			}
+
+			case 'startExtensionHostProfile': {
+				const args = <IStartExtensionHostProfileArguments>arg;
+				return this._extensionHostStatusService.startProfile(args.reconnectionToken);
+			}
+
+			case 'stopExtensionHostProfile': {
+				const args = <IStopExtensionHostProfileArguments>arg;
+				return this._extensionHostStatusService.stopProfile(args.reconnectionToken);
 			}
 
 			case 'getDiagnosticInfo': {

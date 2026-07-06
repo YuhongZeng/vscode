@@ -14,6 +14,7 @@ import { IExtensionHostExitInfo } from './remoteAgentService.js';
 import { revive } from '../../../../base/common/marshalling.js';
 import { IUserDataProfile } from '../../../../platform/userDataProfile/common/userDataProfile.js';
 import { ProtocolConstants } from '../../../../base/parts/ipc/common/ipc.net.js';
+import { IRemoteExtensionHostProfileResult } from '../../extensions/common/extensionHostProfiling.js';
 
 export interface IGetEnvironmentDataArguments {
 	remoteAuthority: string;
@@ -21,6 +22,16 @@ export interface IGetEnvironmentDataArguments {
 }
 
 export interface IGetExtensionHostExitInfoArguments {
+	remoteAuthority: string;
+	reconnectionToken: string;
+}
+
+export interface IStartExtensionHostProfileArguments {
+	remoteAuthority: string;
+	reconnectionToken: string;
+}
+
+export interface IStopExtensionHostProfileArguments {
 	remoteAuthority: string;
 	reconnectionToken: string;
 }
@@ -92,6 +103,22 @@ export class RemoteExtensionEnvironmentChannelClient {
 			reconnectionToken
 		};
 		return channel.call<IExtensionHostExitInfo | null>('getExtensionHostExitInfo', args);
+	}
+
+	static async startExtensionHostProfile(channel: IChannel, remoteAuthority: string, reconnectionToken: string): Promise<boolean> {
+		const args: IStartExtensionHostProfileArguments = {
+			remoteAuthority,
+			reconnectionToken
+		};
+		return channel.call<boolean>('startExtensionHostProfile', args);
+	}
+
+	static async stopExtensionHostProfile(channel: IChannel, remoteAuthority: string, reconnectionToken: string): Promise<IRemoteExtensionHostProfileResult | undefined> {
+		const args: IStopExtensionHostProfileArguments = {
+			remoteAuthority,
+			reconnectionToken
+		};
+		return channel.call<IRemoteExtensionHostProfileResult | undefined>('stopExtensionHostProfile', args);
 	}
 
 	static getDiagnosticInfo(channel: IChannel, options: IDiagnosticInfoOptions): Promise<IDiagnosticInfo> {

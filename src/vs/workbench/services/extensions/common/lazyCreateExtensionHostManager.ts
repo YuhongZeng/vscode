@@ -52,6 +52,10 @@ export class LazyCreateExtensionHostManager extends Disposable implements IExten
 		return friendlyExtHostName(this.kind, this.pid);
 	}
 
+	public get remoteConnectionToken(): string | undefined {
+		return this._actual?.remoteConnectionToken ?? this._extensionHost.remoteConnectionToken;
+	}
+
 	constructor(
 		extensionHost: IExtensionHost,
 		private readonly _initialActivationEvents: string[],

@@ -92,6 +92,7 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 
 	public pid: number | null = null;
 	public readonly remoteAuthority = null;
+	public readonly remoteConnectionToken = undefined;
 	public extensions: ExtensionHostExtensions | null = null;
 
 	private readonly _onExit: Emitter<[number, string]> = this._register(new Emitter<[number, string]>());

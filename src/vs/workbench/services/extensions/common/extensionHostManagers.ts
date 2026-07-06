@@ -18,6 +18,7 @@ export interface IExtensionHostManager {
 	readonly kind: ExtensionHostKind;
 	readonly startup: ExtensionHostStartup;
 	readonly friendyName: string;
+	readonly remoteConnectionToken: string | undefined;
 	readonly onDidExit: Event<[number, string | null]>;
 	readonly onDidChangeResponsiveState: Event<ResponsiveState>;
 	disconnect(): Promise<void>;

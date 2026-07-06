@@ -12,6 +12,7 @@ import { IExtensionHostExitInfo, IRemoteAgentConnection, IRemoteAgentService } f
 import { IRemoteAuthorityResolverService } from '../../../../platform/remote/common/remoteAuthorityResolver.js';
 import { RemoteAgentConnectionContext, IRemoteAgentEnvironment } from '../../../../platform/remote/common/remoteAgentEnvironment.js';
 import { RemoteExtensionEnvironmentChannelClient } from './remoteAgentEnvironmentChannel.js';
+import { IRemoteExtensionHostProfileResult } from '../../extensions/common/extensionHostProfiling.js';
 import { IDiagnosticInfoOptions, IDiagnosticInfo } from '../../../../platform/diagnostics/common/diagnostics.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { ISignService } from '../../../../platform/sign/common/sign.js';
@@ -78,6 +79,20 @@ export abstract class AbstractRemoteAgentService extends Disposable implements I
 		return this._withChannel(
 			(channel, connection) => RemoteExtensionEnvironmentChannelClient.getExtensionHostExitInfo(channel, connection.remoteAuthority, reconnectionToken),
 			null
+		);
+	}
+
+	startExtensionHostProfile(reconnectionToken: string): Promise<boolean> {
+		return this._withChannel(
+			(channel, connection) => RemoteExtensionEnvironmentChannelClient.startExtensionHostProfile(channel, connection.remoteAuthority, reconnectionToken),
+			false
+		);
+	}
+
+	stopExtensionHostProfile(reconnectionToken: string): Promise<IRemoteExtensionHostProfileResult | undefined> {
+		return this._withChannel(
+			(channel, connection) => RemoteExtensionEnvironmentChannelClient.stopExtensionHostProfile(channel, connection.remoteAuthority, reconnectionToken),
+			undefined
 		);
 	}
 

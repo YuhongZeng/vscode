@@ -59,6 +59,7 @@ import { IWorkspaceExtensionsConfigService } from '../../../services/extensionRe
 import { IHostService } from '../../../services/host/browser/host.js';
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { IPreferencesService } from '../../../services/preferences/common/preferences.js';
+import { remoteExtensionHostProfilingEnabledSetting } from '../../../services/extensions/common/extensionHostProfiling.js';
 import { CONTEXT_SYNC_ENABLEMENT } from '../../../services/userDataSync/common/userDataSync.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { WORKSPACE_TRUST_EXTENSION_SUPPORT } from '../../../services/workspaces/common/workspaceTrust.js';
@@ -76,6 +77,7 @@ import { ExtensionEditor } from './extensionEditor.js';
 import { ExtensionEnablementWorkspaceTrustTransitionParticipant } from './extensionEnablementWorkspaceTrustTransitionParticipant.js';
 import { ExtensionRecommendationNotificationService } from './extensionRecommendationNotificationService.js';
 import { ExtensionRecommendationsService } from './extensionRecommendationsService.js';
+import { ExtensionsRemoteAutoProfiler } from './extensionsRemoteAutoProfiler.js';
 import { ClearLanguageAction, ConfigureWorkspaceFolderRecommendedExtensionsAction, ConfigureWorkspaceRecommendedExtensionsAction, InstallAction, InstallAnotherVersionAction, InstallSpecificVersionOfExtensionAction, SetColorThemeAction, SetFileIconThemeAction, SetProductIconThemeAction, ToggleAutoUpdateForExtensionAction, ToggleAutoUpdatesForPublisherAction, TogglePreReleaseExtensionAction } from './extensionsActions.js';
 import { ExtensionActivationProgress } from './extensionsActivationProgress.js';
 import { ExtensionsCompletionItemsProvider } from './extensionsCompletionItemsProvider.js';
@@ -194,6 +196,13 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
 				],
 				description: localize('extensionsWebWorker', "Enable web worker extension host."),
 				default: 'auto'
+			},
+			[remoteExtensionHostProfilingEnabledSetting]: {
+				type: 'boolean',
+				description: localize('extensions.remoteExtensionHostProfiling.enabled', "When enabled, the remote extension host process is monitored for unresponsiveness and a CPU profile is written on the remote server when it becomes blocked."),
+				default: false,
+				scope: ConfigurationScope.MACHINE,
+				tags: ['experimental']
 			},
 			'extensions.supportVirtualWorkspaces': {
 				type: 'object',
@@ -2046,6 +2055,7 @@ if (isWeb) {
 }
 
 registerWorkbenchContribution2(ExtensionToolsContribution.ID, ExtensionToolsContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(ExtensionsRemoteAutoProfiler.ID, ExtensionsRemoteAutoProfiler, WorkbenchPhase.AfterRestored);
 
 
 // Running Extensions

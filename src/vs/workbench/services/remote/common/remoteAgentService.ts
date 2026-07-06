@@ -11,6 +11,7 @@ import { Event } from '../../../../base/common/event.js';
 import { PersistentConnectionEvent } from '../../../../platform/remote/common/remoteAgentConnection.js';
 import { ITelemetryData, TelemetryLevel } from '../../../../platform/telemetry/common/telemetry.js';
 import { timeout } from '../../../../base/common/async.js';
+import { IRemoteExtensionHostProfileResult } from '../../extensions/common/extensionHostProfiling.js';
 
 export const IRemoteAgentService = createDecorator<IRemoteAgentService>('remoteAgentService');
 
@@ -30,6 +31,14 @@ export interface IRemoteAgentService {
 	 * Get exit information for a remote extension host.
 	 */
 	getExtensionHostExitInfo(reconnectionToken: string): Promise<IExtensionHostExitInfo | null>;
+	/**
+	 * Starts profiling a remote extension host on the remote server.
+	 */
+	startExtensionHostProfile(reconnectionToken: string): Promise<boolean>;
+	/**
+	 * Stops profiling a remote extension host on the remote server and returns the profile result.
+	 */
+	stopExtensionHostProfile(reconnectionToken: string): Promise<IRemoteExtensionHostProfileResult | undefined>;
 
 	/**
 	 * Gets the round trip time from the remote extension host. Note that this
