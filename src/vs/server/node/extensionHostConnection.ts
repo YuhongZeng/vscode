@@ -36,6 +36,9 @@ const remoteExtensionHostProfileSummaryMaxSamples = 500000;
 const remoteExtensionHostProfileSummaryMaxFilesPerExtension = 200;
 const remoteExtensionHostProfileSummaryTopFilesPerExtension = 50;
 const remoteExtensionHostProfileSummaryMaxUnmatchedEntries = 200;
+const remoteExtensionHostProfileSummaryMaxIndexedExtensions = 1000;
+const remoteExtensionHostProfileSummaryMaxCandidateEntries = 200;
+const remoteExtensionHostProfileSummaryMaxExtensionPathLength = 8192;
 const remoteExtensionHostProfileSummaryMaxNormalizedUrlCacheEntries = 10000;
 const remoteExtensionHostProfileNoFileIndex = -1;
 const remoteExtensionHostProfileOtherFilesIndex = -2;
@@ -397,11 +400,8 @@ export class ExtensionHostConnection extends Disposable {
 		}
 
 		const timeDeltas = profile.timeDeltas ?? [];
-		const normalizedExtensions = normalizeProfileExtensions(extensions);
-		const extensionPathTree = TernarySearchTree.forPaths<number>(isWindows);
-		for (let i = 0; i < normalizedExtensions.length; i++) {
-			extensionPathTree.set(normalizedExtensions[i].normalizedLocation, i + 1);
-		}
+		const extensionProfileIndex = createExtensionProfileIndex(extensions);
+		const normalizedExtensions = extensionProfileIndex.extensions;
 		const normalizedUrlCache = new Map<string, string>();
 		const normalizeUrl = (url: string): string => {
 			const cached = normalizedUrlCache.get(url);
@@ -470,7 +470,7 @@ export class ExtensionHostConnection extends Disposable {
 				visited[nodeIndex] = 1;
 
 				const node = nodes[nodeIndex];
-				const matchedFrame = matchExtensionFrame(node.callFrame.url, extensionPathTree, normalizeUrl);
+				const matchedFrame = matchExtensionFrame(node.callFrame.url, extensionProfileIndex.extensionPathTree, normalizeUrl);
 				if (matchedFrame) {
 					extensionIndex = matchedFrame.extensionIndex;
 					fileIndex = getFileIndex(extensionIndex, matchedFrame.url, matchedFrame.normalizedUrl);
@@ -572,7 +572,7 @@ export class ExtensionHostConnection extends Disposable {
 			nodeCount: nodes.length,
 			sampleCount: samples.length,
 			extensionCandidateCount: extensions.length,
-			extensionCandidates: normalizedExtensions,
+			extensionCandidates: extensionProfileIndex.extensionCandidates,
 			extensions: extensionSummaries,
 			topExtension: extensionSummaries[0],
 			unmatched: [...unmatched.entries()]
@@ -761,6 +761,12 @@ interface IRemoteExtensionHostProfileNormalizedExtension {
 	readonly normalizedEntryPoint: string | undefined;
 }
 
+interface IRemoteExtensionHostProfileIndex {
+	readonly extensions: IRemoteExtensionHostProfileNormalizedExtension[];
+	readonly extensionCandidates: IRemoteExtensionHostProfileNormalizedExtension[];
+	readonly extensionPathTree: TernarySearchTree<string, number>;
+}
+
 type ProfileSegmentId = 'program' | 'gc' | 'self';
 
 interface IRemoteExtensionHostProfileMatchedFrame {
@@ -795,21 +801,59 @@ function createProfileSummary(profile: IV8Profile, extensions: readonly IRemoteE
 	};
 }
 
-function normalizeProfileExtensions(extensions: readonly IRemoteExtensionHostProfileExtension[]): IRemoteExtensionHostProfileNormalizedExtension[] {
-	return extensions
-		.map(extension => {
-			const entryPoint = extension.main ? joinProfilePaths(extension.location, extension.main) : undefined;
-			return {
-				id: extension.id,
-				location: extension.location,
-				main: extension.main,
-				entryPoint,
-				normalizedLocation: normalizeProfilePath(extension.location),
-				normalizedEntryPoint: entryPoint ? normalizeProfilePath(entryPoint) : undefined
-			};
-		})
-		.filter(extension => extension.normalizedLocation.length > 0)
-		.sort((a, b) => b.normalizedLocation.length - a.normalizedLocation.length);
+function createExtensionProfileIndex(extensions: readonly IRemoteExtensionHostProfileExtension[]): IRemoteExtensionHostProfileIndex {
+	const indexedExtensions: IRemoteExtensionHostProfileNormalizedExtension[] = [];
+	const extensionCandidates: IRemoteExtensionHostProfileNormalizedExtension[] = [];
+	const extensionPathTree = TernarySearchTree.forPaths<number>(isWindows);
+	for (const extension of extensions) {
+		if (indexedExtensions.length >= remoteExtensionHostProfileSummaryMaxIndexedExtensions) {
+			break;
+		}
+		const normalizedExtension = normalizeProfileExtension(extension);
+		if (!normalizedExtension) {
+			continue;
+		}
+		const index = indexedExtensions.length;
+		indexedExtensions.push(normalizedExtension);
+		extensionPathTree.set(normalizedExtension.normalizedLocation, index + 1);
+		if (extensionCandidates.length < remoteExtensionHostProfileSummaryMaxCandidateEntries) {
+			extensionCandidates.push(normalizedExtension);
+		}
+	}
+	return {
+		extensions: indexedExtensions,
+		extensionCandidates,
+		extensionPathTree
+	};
+}
+
+function normalizeProfileExtension(extension: IRemoteExtensionHostProfileExtension): IRemoteExtensionHostProfileNormalizedExtension | undefined {
+	const id = toProfileString(extension.id);
+	const location = toProfileString(extension.location);
+	const main = toProfileString(extension.main);
+	if (!id || !location) {
+		return undefined;
+	}
+	const entryPoint = main ? joinProfilePaths(location, main) : undefined;
+	const normalizedLocation = normalizeProfilePath(location);
+	if (!normalizedLocation) {
+		return undefined;
+	}
+	return {
+		id,
+		location,
+		main,
+		entryPoint,
+		normalizedLocation,
+		normalizedEntryPoint: entryPoint ? normalizeProfilePath(entryPoint) : undefined
+	};
+}
+
+function toProfileString(value: string | undefined): string | undefined {
+	if (typeof value !== 'string' || value.length === 0 || value.length > remoteExtensionHostProfileSummaryMaxExtensionPathLength) {
+		return undefined;
+	}
+	return value;
 }
 
 function joinProfilePaths(parent: string, child: string): string {
