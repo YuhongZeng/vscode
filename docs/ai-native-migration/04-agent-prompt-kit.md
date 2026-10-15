@@ -1,11 +1,17 @@
 # CodeMate 原生化：agent 提示词套件 v2
 
-> 版本：v2（2026-10-14）。v1 见本文件的 git 历史。
+> 版本：v2.1（2026-10-15）。v1、v2 见本文件的 git 历史。
 > 用途：内部 agent team，模型路由为 `glm52-main`、`glm51-critic`、`qwen-security`（见第七节）。
 > 来源：v1、Codex 版提示词、同事交接文档的使用要求（交接文档本身在内部，本文未读到其内容）。
 > 第八节「复核线索」是在社区 Code OSS 1.113.0 上核查的结果，不是 vscode-internal 的事实；agent 必须在内部代码上复核后才能引用。
 
-## 一、v2 的变化
+## 一、版本变化
+
+### v2.1（2026-10-15）
+
+负责人确认 VS Code MCP 基于社区 `test/mcp`，增加了自动录屏和一些操作。据此更新了 A1、A5、5.4、5.5、5.7、6.6 和第八节，社区版本的评估见本目录 06。宪章没有改动。
+
+### v2（2026-10-14）
 
 **新信息带来的改动**
 
@@ -152,7 +158,7 @@
 
 A1 现场与工具
 - 记录仓库、分支、提交、未提交改动、构建与运行方式、内部规范和 CI 入口。
-- 核实 VS Code MCP（zyh/ai-research，提交范围 850e0aa8fcf9a94fc842812924b29b351ccf72e1 → 28356318c067d58bcd89d6857c44db85710ad305）：仓库、工具实现、连接方式和实际能力。用一次冒烟（启动 → 打开 CodeMate → 截图 → 读取一个打点或 DOM 状态）证明可用；不假设已连接或具备未验证的能力。缺口写成 MCP 需求单。
+- 核实 VS Code MCP（zyh/ai-research，提交范围 850e0aa8fcf9a94fc842812924b29b351ccf72e1 → 28356318c067d58bcd89d6857c44db85710ad305；基于社区 test/mcp，增加了自动录屏等操作）：相对社区版本的改动、实际工具清单、连接方式，以及启动方式（源码还是构建产物、启动参数、用户数据目录）。用一次冒烟证明可用：启动 → 打开 CodeMate → 截图 → 用脚本读取一个打点或 DOM 状态 → 读取控制台消息 → 停止，并找到录屏和日志。不假设已连接或具备未验证的能力；缺口写成 MCP 需求单。
 - 检查是否已有 STATUS、任务清单、ADR、性能记录或后续交接；确认版本和有效性，避免重复劳动。
 
 A2 交接核验（最先完成）
@@ -179,6 +185,7 @@ A5 基线（先冒烟和小样本排错，再按波动和决策需要增加样�
 - 分段测量：desktop 进程启动与窗口显示；Workbench 恢复与可交互；插件发现、加载与激活；CodeMate 模块加载、初始化与界面首次打开；kernel 启动、连接与就绪；AI 请求发出 → 网络首字节 → 首段有效内容 → 实际绘制；流式渲染、输入响应、长会话与大内容；关闭重开、状态恢复，以及适用的多窗口场景。分析关键路径上的同步阻塞、过早初始化、重复加载、跨进程通信、资源加载、渲染和内存问题。
 - 固定或记录：硬件、操作系统、版本、补丁与构建模式；用户配置、扩展、工作区与窗口恢复状态；冷启动、热启动及具体缓存条件；kernel、网络、模型服务和后台负载；样本数量、计时边界和测量方法。
 - 本地开销与外部服务延迟分开；必要时用回放或模拟服务，但保留真实 kernel 与服务的集成验证。不同进程的时钟未经校准不能直接相减；MCP 轮询计时要注明误差。报告原始数据、中位数和波动；样本不足时不报告尾延迟。
+- 核实测量时的启动方式：社区 test/mcp 启动的实例处于开发模式、关闭了 V8 代码缓存、开启了 tracing（录屏时还要编码视频），数据不代表用户使用的构建。启动和加载性能用生产构建、固定参数测量；运行期指标在页面内打点后读取；各对照对象的启动方式保持一致，并写进性能记录。
 - 「与社区对齐」的指标和允许差距，在取得基线后提出建议，并标明已认可和待确认；目标确认前只报告测量结果和改善幅度，不宣称达标。
 
 A6 路线初判
@@ -275,6 +282,7 @@ B 最小端到端试点（本轮完成准备；条件允许就执行）
 - 先冒烟和小样本排错，再增加样本；报告原始数据、中位数、波动、样本数、环境和计时边界。
 - 按首轮任务 A5 的分段和对照对象测量；本地开销与外部服务延迟分开；跨进程时间先校准再比较。
 - 定位工具以内部版本实际可用的为准，例如启动 CPU profile、启动性能视图、运行中扩展的激活耗时、DevTools 性能录制和堆快照（社区版本中的入口见复核线索）。
+- 用 MCP 驱动场景、读取页面内的打点，不用工具调用的往返时间计时。每次采集前记录运行模式（构建产物或源码）、代码缓存、tracing 和录屏的状态（社区 test/mcp 的默认行为见复核线索）。
 - 每个优化都要有相同条件下的前后对比；结论只基于数据。
 - 重点检查成本是否被挪到了主线程、首次打开或首次请求。
 ```
@@ -285,9 +293,11 @@ B 最小端到端试点（本轮完成准备；条件允许就执行）
 ## 角色：功能、界面与集成验证（glm52-main）
 - 场景来自功能与消息对照表，写成可重复执行的步骤：构建、启动参数、用户数据目录、工作区、窗口尺寸、主题、语言、缩放、操作序列、期望结果。
 - 覆盖：页面、布局、主题、图标和关键交互；键盘、焦点、滚动和缩放；加载、空态、错误、取消、重试和重连；会话恢复、持久化、配置和升级兼容；流式消息、代码展示、工具调用和 kernel 集成。
-- 新旧方案在相同条件下成对截图；时间戳、流式文本、动画等动态内容先定好比对规则；所有差异都登记，不静默接受。
-- 失败时保存现场（截图、日志、DOM 片段、进程状态），不改判为通过；MCP 不支持的步骤写需求单，并标「待运行验证」。
-- 只使用登记给你的实例、端口和用户数据目录，结束后释放。
+- 新旧方案在相同条件下成对截图；时间戳、流式文本、动画等动态内容先定好比对规则；交互、流式渲染和动画的差异用录屏作为证据；所有差异都登记，不静默接受。
+- 旧插件的界面在 webview 的 iframe 里，社区 test/mcp 的选择器和脚本进不去，只能截图、录屏和按坐标操作；新实现在开放模式的 Shadow DOM 中可以用选择器定位。对比时写明双方各用了什么手段。
+- 每个场景结束时读取控制台消息，检查 CSP、Trusted Types 违规和报错。
+- 失败时保存现场（截图、录屏、日志、DOM 片段、进程状态），不改判为通过；MCP 不支持的步骤写需求单，并标「待运行验证」。
+- 只使用登记给你的 MCP 进程、实例、用户数据目录和扩展目录，结束后释放。社区 test/mcp 一个进程只管一个实例，默认使用开发版的共享用户数据目录，要显式指定独立目录。
 ```
 
 ### 5.6 实施与接线
@@ -307,10 +317,11 @@ B 最小端到端试点（本轮完成准备；条件允许就执行）
 
 ```text
 ## 角色：验证工具（glm52-main）
+- 内部 MCP 基于社区 test/mcp（依赖 test/automation 和 Playwright），负责人已加入自动录屏等操作。先列出与社区版本的差异和现有能力，再做增强。
 - 只做与真实验收缺口相关的 MCP 增强；需求来自 MCP 需求单，并经总控确认。
 - 在 zyh/ai-research 的独立分支或 worktree 中实现，与产品代码分开交付。
 - 先用自测用例验证工具本身，再在产品场景中验证；更新能力清单和使用说明。
-- 常见缺口：等待指定 DOM 状态并返回耗时与误差；在渲染进程执行脚本并返回结果；按区域截图与比对；按指定用户数据目录、窗口尺寸、主题和语言启动；读取性能打点。
+- 社区版本中的缺口（逐项核对内部版本）：实例隔离与多实例并行（用户数据目录、扩展目录、日志目录）；生产形态启动（不设置 VSCODE_DEV，可关闭 --no-cached-data、tracing 和录屏）；按 frame 执行脚本和定位元素（webview）；读取性能打点并附 timeOrigin；固定窗口尺寸、缩放、主题和语言，按元素截图；页面内计时；CodeMate 高层操作（打开面板、发送、等待流式结束、取消）；按场景控制录屏。
 ```
 
 ### 5.8 独立评审
@@ -416,6 +427,7 @@ B 最小端到端试点（本轮完成准备；条件允许就执行）
 # PERF-NNN <场景>
 - 对照对象：
 - 环境：硬件 / 系统 / 版本与提交 / 构建模式 / 配置与扩展 / 工作区与窗口状态 / 缓存条件 / kernel、网络、服务负载
+- 启动方式：构建产物或源码 / 启动参数 / V8 代码缓存 / tracing 与录屏 / 驱动工具（MCP 或其他）
 - 计时边界与方法（含工具误差）：
 - 样本数：
 - 原始数据：<路径>
@@ -470,6 +482,7 @@ B 最小端到端试点（本轮完成准备；条件允许就执行）
 - 同一配置使用 `packages: 'external'`：对 `node_modules` 的裸模块导入不会打进入口包。社区代码在渲染进程中常用 `src/vs/amdX.ts` 的 `importAMDNodeModule` / `resolveAmdNodeModulePath` 加 `FileAccess.asBrowserUri`（`src/vs/base/common/network.ts`）按需加载；开发态的 import map 只用于 CSS（`src/vs/code/electron-browser/workbench/workbench.ts`）。需要核实 Vue 和组件库在 vscode-internal 中实际如何构建和加载。
 - 主入口 `src/vs/workbench/workbench.desktop.main.ts`、`workbench.common.main.ts` 静态引入各 contribution。
 - 服务注册 `registerSingleton(…, InstantiationType.Delayed / Eager)`；contribution 阶段 `WorkbenchPhase.BlockStartup / BlockRestore / AfterRestored / Eventually`（`src/vs/workbench/common/contributions.ts`）。
+- V8 代码缓存：`src/main.ts` 的 `getCodeCachePath` 在传了 `--no-cached-data`、设置了 `VSCODE_DEV`，或 `product.json` 没有 `commit` 时返回空，窗口随之使用 `v8CacheOptions: 'none'`（`src/vs/platform/windows/electron-main/windowImpl.ts`）。要确认内部构建的 `product.json` 带有 `commit`。
 
 **性能工具**
 
@@ -492,6 +505,14 @@ B 最小端到端试点（本轮完成准备；条件允许就执行）
 - HTML 清洗：`src/vs/base/browser/domSanitize.ts` 的 `sanitizeHtml` 返回 `TrustedHTML`。
 - 渲染进程沙箱：`src/vs/platform/windows/electron-main/windows.ts` 中的 `sandbox: true`。
 - 进程与通信：`src/vs/platform/utilityProcess/electron-main/utilityProcess.ts`（`UtilityProcess`）、`src/vs/base/parts/ipc/electron-browser/ipc.mp.ts`（`acquirePort`）；社区较新版本的 `src/vs/platform/agentHost` 可作为独立 agent 进程的参考（见本目录 01）。
+
+**VS Code MCP（社区 test/mcp，详见本目录 06）**
+
+- 基于 `test/automation` 和 Playwright。一个 MCP 进程只管理一个实例，调用 `vscode_automation_start` 之前其他工具都处于禁用状态。通用操作是 `vscode_automation_window_*`，包括截图、无障碍树快照、按选择器操作、`window_evaluate`、`window_console_messages`；2026 年 2 月以前的版本通过 `@playwright/mcp` 提供同等的 `browser_*` 工具。
+- 启动的实例不适合测性能：`test/automation/src/electron.ts` 固定传 `--no-cached-data`；`test/mcp/src/application.ts` 的 `getApplication` 即使传了 `--build` 也设置 `VSCODE_DEV=1`，窗口因此加载 `workbench-dev.html`，也不加载语言包；Playwright tracing 总是开启并截图。
+- 默认不指定 `--user-data-dir`，使用开发版的共享用户数据目录；日志目录 `.build/vscode-playwright-mcp/logs` 在每次 MCP 进程启动时清空。多个 agent 并行时，需要各自的 MCP 进程、worktree 和目录（可以通过 `--electronArgs` 或 `vscode_automation_restart` 的 `extraArgs` 传入）。
+- 选择器和 `window_evaluate` 只作用于主文档：Playwright 选择器能穿透开放模式的 Shadow DOM，但进不了 iframe。webview 是两层 iframe，旧插件界面只能截图、录屏和按坐标操作。
+- 传 `--build` 时会先从 update.code.visualstudio.com 下载上一个稳定版，内网要传 `--stable-build`。`--remote` 用 vscode-test-resolver 模拟远程工作区。
 
 **规范与检查（以内部仓库脚本为准）**
 
